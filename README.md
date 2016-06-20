@@ -25,6 +25,7 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <ul>
 <li> radius
 <li> Authen::Radius
+<li> iptraf
 </ul>
 
 <h2>Installation debian</h2>
@@ -35,6 +36,13 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> apt-get install libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
 <li> perl -MCPAN -e 'install Curses::Application'
 <li> cd /opt/
-<li> git clone 
-
+<li> git clone https://github.com/mongrelx/perl-traffic-control.git
 </ul>
+
+<h2>Configuration</h2>
+<h3>Database<h3>
+<h3>Web-server<h3>
+<h3>Interfaces<h3>
+<h3>Radius<h3>
+<h2>Usage</h2>
+
