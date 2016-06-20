@@ -10,6 +10,8 @@ Perl QoS and traffic shaping
 <li> Curses::Application
 <li> DBI
 <li> DBH::mysql
+</ul>
+<ul>
 <h2>optional</h2>
 <li> radius
 <li> Authen::Radius
