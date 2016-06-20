@@ -1,6 +1,12 @@
 # perl-traffic-control
 
 Perl QoS and traffic shaping.
+RRD logging & graphing
+Webmin module
+Curses interface
+Captive portal
+
+
 This was in production usage between 2000-2012 and it performed quite nicely
 
 <h2>Requirements</h2>
@@ -28,5 +34,7 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> apt-get install libconvert-ber-perl
 <li> apt-get install libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
 <li> perl -MCPAN -e 'install Curses::Application'
+<li> cd /opt/
+<li> git clone 
 
 </ul>
