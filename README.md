@@ -6,11 +6,11 @@
 <li>Webmin module
 <li>Curses interface
 <li>Captive portal
-<li>Scales to 2000+ users but easy to shape traffic on small scale too
-<li>I'm currently using to ensure my bandwidth in family shared lined as kids consume lot's of bandwidth
-<li>Either per device or per use bw
-<li> blacklist 
-<li> timed events
+<li>Scales up to 2000 user, but easy to shape traffic on small scale too
+<li>I'm currently using it to ensure my bandwidth in family shared lined as kids consume lot's of bandwidth
+<li>Either per device or per user bw
+<li>blacklist 
+<li>timed events
 </ul>
 
 This was in production usage between 2000-2012 and it performed quite nicely
