@@ -28,21 +28,39 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> iptraf
 </ul>
 
-<h2>Installation debian</h2>
+<h2>Installation on debian</h2>
 <ul>
-<li> apt-get install libdbi-perl 
+<li> apt-get install libdbi-perl librrdtool-oo-perl
 <li> apt-get install libdbd-mysql libdbd-mysql-perl libmysqlclient18
-<li> apt-get install libconvert-ber-perl
+<li> apt-get install libconvert-ber-perl mysql-server freeradius-mysql
 <li> apt-get install libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
-<li> perl -MCPAN -e 'install Curses::Application'
+<li> cpan -i Curses::Application
+<li> cpan -i RRD
 <li> cd /opt/
 <li> git clone https://github.com/mongrelx/perl-traffic-control.git
 </ul>
 
 <h2>Configuration</h2>
 <h3>Database<h3>
+<li> mysqladmin create ptc -p
+<li> mysqladmin create ptc_auth -p
+<li> mysql -p<br>
+mysql>GRANT ALL PRIVILEGES   ON ptc.* TO 'ptc_user'@'%'   IDENTIFIED BY 'ptc_pass';
+mysql> 
 <h3>Web-server<h3>
 <h3>Interfaces<h3>
 <h3>Radius<h3>
+<li> edit sql.conf to match db_user,db_pass,db_name
+<li> include sql.conf from freeradius.conf
+<li> add to /etc/freeradius/users <br>
+DEFAULT Autz-Type :=PTC_USER <br>
+        Fall-Through = Yes<br>
+<li> add to /etc/freeradius/sites-enable/default<br>
+under Authorization section<br>
+
+ Autz-Type PTC_USER {
+                sql
+        }
+
 <h2>Usage</h2>
 
