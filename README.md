@@ -1,11 +1,17 @@
 # perl-traffic-control
 
-Perl QoS and traffic shaping.
-RRD logging & graphing
-Webmin module
-Curses interface
-Captive portal
-
+<h2>Perl QoS and traffic shaping.</h2>
+<ul>
+<li>RRD logging & graphing
+<li>Webmin module
+<li>Curses interface
+<li>Captive portal
+<li>Scales to 2000+ users but easy to shape traffic on small scale too
+<li>I'm currently using to ensure my bandwidth in family shared lined as kids consume lot's of bandwidth
+<li>Either per device or per use bw
+<li> blacklist 
+<li> timed events
+</ul>
 
 This was in production usage between 2000-2012 and it performed quite nicely
 
