@@ -42,14 +42,17 @@ This was in production usage between 2000-2012 and it performed quite nicely
 
 <h2>Configuration</h2>
 <h3>Database<h3>
+<ul>
 <li> mysqladmin create ptc -p
 <li> mysqladmin create ptc_auth -p
 <li> mysql -p<br>
 mysql>GRANT ALL PRIVILEGES   ON ptc.* TO 'ptc_user'@'%'   IDENTIFIED BY 'ptc_pass';
 mysql> 
+</ul>
 <h3>Web-server<h3>
 <h3>Interfaces<h3>
 <h3>Radius<h3>
+<ul>
 <li> edit sql.conf to match db_user,db_pass,db_name
 <li> include sql.conf from freeradius.conf
 <li> add to /etc/freeradius/users <br>
@@ -61,6 +64,6 @@ under Authorization section<br>
  Autz-Type PTC_USER {
                 sql
         }
-
+</ul>
 <h2>Usage</h2>
 
