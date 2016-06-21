@@ -104,7 +104,7 @@ if ($Options::debug)
 
 $main::debug = $debug;
 
-
+print %options;
 if ( (-e $lock_file) && (! defined $options{c} ))
 {
     printDebug(0,"CRIT","AAA already running -- if not please remove $lock_file using -c");
@@ -164,7 +164,7 @@ my $start_time;
 printDebug(0,"INFO","Reading radius secrets");
 # get the radius shared secret
 my( %secrets, ) ;
-open SECRETS, "<".$dir."/etc/radius.clients"  # CHANGE this to correct path
+open SECRETS, "</etc/freeradius/clients.conf"  # CHANGE this to correct path
 or  die "no radius.secrets file \n";
 while (<SECRETS>) {
     s/\#.*$// ;
