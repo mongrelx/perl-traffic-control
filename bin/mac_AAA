@@ -1,0 +1,2354 @@
+#!/usr/bin/perl -w
+
+
+# 0 => no auth
+# 1 => everybody auths
+# 2 => ranged auth rest use QoS
+# 3 => ranged auth rest dont use QoS
+# 4 => no auth / no qos 
+
+#atHost{xx.xx.xx.xx/yy}=xx.xx.xx.xx
+#network{xx.xx.xx.xx/yy}=INDEVICE
+#out_device{xx.xx.xx.xx/yy}=[OUTDEVICE1,OUTDEVICE2]  || OUTDEVICE1
+#out_speed{xx.xx.xx.xx/yy}=DEFAULTSPEED or IPBASEDSPEED
+#in_speed{xx.xx.xx.xx/yy}=DEFAULTSPEED or IPBASEDSPEED
+#range{xx.xx.xx.xx/yy}=RANGE
+#method{xx.xx.xx.xx/yy}=ip || mac # mac is default
+#require_auth{xx.xx.xx.xx/yy}= 0 (never )| 1 (always) | 2 (ranged/QOS) | 3 (ranged/NOQOS)
+#
+#regional_rules{1}=-i eth2.91 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1100 
+#
+#
+#
+use strict;
+use Authen::Radius;
+use Getopt::Std;
+use FileHandle;
+use lib qw(/opt/perl-traffic-control/lib);
+use PTC::NetUtils;
+use PTC::Utils;
+use POSIX ":sys_wait_h";
+use Getopt::Std;
+
+$SIG{CHLD} = \&REAPER;
+my $dir="/opt/perl-traffic-control";
+my %options;
+my %unwantedHash=();
+my $removedRules=0;
+my $createdRules=0;
+my $procs = 0;
+my $maxprocs = 10;
+my @deadpids=();
+my $working = {};
+my $QoStype="htb-ip";
+my $version="2.25";
+
+Authen::Radius->load_dictionary($dir."/etc/dictionary/dictionary");
+
+my $lock_file="/var/run/mac_AAA.pid";
+my $clearList=$dir."/tmp/clearList";
+my $unwantedList=$dir."/tmp/unwantedList";
+
+getopts('o:c:d:f:x:n', \%options);
+
+my $cfg_file = $options{f};
+my $debug = $options{d} || 0;
+
+$main::debug = $debug;
+PTC::Utils::loadConfig($cfg_file,0,1);
+my $check_time;
+if (defined $cfg_file)
+{
+    my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$block) = stat($cfg_file);
+    $check_time=$mtime;
+}
+
+my $radius_host="127.0.0.1";
+if (defined  $Options::radius_host)
+{
+    $radius_host=$Options::radius_host;
+    print "Using radius host $radius_host\n";
+}
+
+if (!defined  $Options::max_load)
+{
+    my @cpuinfo=`cat /proc/cpuinfo`;
+    my $cpus=0;
+    foreach (@cpuinfo)
+    {
+        if (m#processor\s+:\s+(\d+)#)
+        {
+            $cpus++;
+        }
+    }
+    $Options::max_load=2*$cpus-(0.1*$cpus);
+}
+print "MAX LOAD ".$Options::max_load."\n";
+
+if (!defined  $Options::warn_load)
+{
+    $Options::warn_load=($Options::max_load/2); #/
+}
+print "WARN LOAD ".$Options::warn_load."\n";
+
+if (!defined $Options::recheck_time)
+{
+    $Options::recheck_time = 3600;
+}
+print "RECHECK TIME ".$Options::recheck_time."\n";
+
+if ($Options::debug)
+{
+    $debug=$Options::debug;
+}
+
+$main::debug = $debug;
+
+
+if ( (-e $lock_file) && (! defined $options{c} ))
+{
+    printDebug(0,"CRIT","AAA already running -- if not please remove $lock_file using -c");
+    exit(1);
+}
+elsif ( (-e $lock_file) &&(defined $options{c}))
+{
+    printDebug(0,"INFO","removing lockfile $lock_file");
+    `rm $lock_file`;
+}
+printDebug(0,"INFO","creating lockfile $lock_file");
+open(LOCK,">$lock_file");
+print LOCK $$;
+
+sub newproc {
+    my ($work) = @_;
+
+    if ($procs >= $maxprocs) {
+        sleep(10);
+    }
+
+    if ($procs >= ($maxprocs + 50)) {
+        # the throttling attempts obviously haven't worked - bail out!
+        printDebug(0,"CRIT","Killing myself:  too many processes");
+        kill(9, 0);
+    }
+
+    my $pid = fork();
+    if ($pid == 0) {
+        `$work`;
+        exit 0;
+
+    } elsif ($pid > 0) {
+        $working->{$pid} = 1;
+        $procs++;
+
+    } else 
+    {
+        die "Can't fork() for $!";
+    }
+}
+
+my %Option;
+my %mac_to_ip=();
+my %class=();
+my @freeclasses=();
+my $reserved_classes=0;
+my @handles=();
+
+
+my %status;
+my %ip_status;
+my %customer_classes=();
+
+my $start_time;
+
+printDebug(0,"INFO","Reading radius secrets");
+# get the radius shared secret
+my( %secrets, ) ;
+open SECRETS, "<".$dir."/etc/radius.clients"  # CHANGE this to correct path
+or  die "no radius.secrets file \n";
+while (<SECRETS>) {
+    s/\#.*$// ;
+    s/^\s+// ;
+    next if /^$/ ;
+    my( $host,  $sec, ) = split /\s+/ ;
+    $secrets{ $host }{'secret'} = $sec ;
+}
+close SECRETS ;
+
+$SIG{INT} = \&SendAcctEnd;
+$SIG{QUIT} = \&SendAcctEnd;
+$SIG{TERM} = \&SendAcctEnd;
+
+
+my %QoSDevice;
+
+print "FLUSHING FIREWALL ";
+`iptables -F REDIRECT_LIST -t nat`;
+`iptables -F REDIRECT_LIST `;
+`iptables -F BLACKLIST -t nat`;
+`iptables -F VIRUS`;
+`iptables -F INPUT_LIST`;
+`iptables -F INPUT_UNWANTED`;
+`iptables -F FORWARD_UNWANTED`;
+print "DONE \n";
+
+foreach my $network (keys %Options::network)
+{
+    printDebug(0,"INFO","Creating iptables table MAC-COUNTER-$network");
+    `iptables -N MAC-COUNTER-$network`;
+    `iptables -I COUNTERS -j MAC-COUNTER-$network -s $network`;
+    `iptables -I COUNTERS -j MAC-COUNTER-$network -d $network`;
+    $QoSDevice{$Options::network{$network}}{count}++;
+    if ($QoSDevice{$Options::network{$network}}{count} <= 1)
+    {
+        `iptables -I INPUT_LIST -j ACCEPT -i $Options::network{$network} -p udp --dport 67`;
+        `iptables -I INPUT_LIST -j ACCEPT -i $Options::network{$network} -p udp --dport 68`;
+        `iptables -I INPUT_LIST -j ACCEPT -i $Options::network{$network} -p tcp --dport 80`;
+        `iptables -I INPUT_LIST -j ACCEPT -i $Options::network{$network} -p tcp --dport 81`;
+        `iptables -I INPUT_LIST -j ACCEPT -i $Options::network{$network} -p tcp --dport 3128`;
+        `iptables -I INPUT_LIST -j ACCEPT -i $Options::network{$network} -p tcp --dport 3129`;
+        `iptables -I INPUT_LIST -j ACCEPT -i $Options::network{$network} -p tcp --dport 443`;
+    }
+    if ($Options::out_device{$network} =~m/\[(.*),(.*)/)
+    {
+        my $deviceList=$Options::out_device{$network};
+        $deviceList=~s#^\[##;
+        $deviceList=~s#\]##;
+        my @devices = split (/,/,$deviceList);
+        foreach my $device (@devices)
+        {
+            $QoSDevice{$device}{count}++;
+            printDebug(0,"INFO","$device is networks $network out_device");
+            if ($QoSDevice{$device}{count} <= 1)
+            {
+                `iptables -I INPUT_UNWANTED -j DROP -i $device`;
+                `iptables -A FORWARD_UNWANTED -o $device -d 192.168.0.0/16 -j DROP`;
+                `iptables -A FORWARD_UNWANTED -o $device -d 172.16.0.0/12 -j DROP`;
+                `iptables -A FORWARD_UNWANTED -o $device -d 10.0.0.0/12 -j DROP`;
+                `iptables -A FORWARD_UNWANTED -o $device -d 127.0.0.0/8 -j DROP`;
+            }
+        }
+
+    }
+    else
+    {
+        $QoSDevice{$Options::out_device{$network}}{count}++;
+        if ($QoSDevice{$Options::out_device{$network}}{count} <= 1)
+        {
+            `iptables -I INPUT_UNWANTED -j DROP -i $Options::out_device{$network}`;
+            `iptables -A FORWARD_UNWANTED -o $Options::out_device{$network} -d 192.168.0.0/16 -j DROP`;
+            `iptables -A FORWARD_UNWANTED -o $Options::out_device{$network} -d 172.16.0.0/12 -j DROP`;
+            `iptables -A FORWARD_UNWANTED -o $Options::out_device{$network} -d 10.0.0.0/12 -j DROP`;
+            `iptables -A FORWARD_UNWANTED -o $Options::out_device{$network} -d 127.0.0.0/8 -j DROP`;
+        }
+    }
+}
+
+
+my $i=0;
+
+foreach (keys %QoSDevice)
+{
+    $i++;
+    my $dev=$_;
+    if ((defined  $Options::use_qos) && ($Options::use_qos eq 0))
+    {
+    }
+    else
+    {
+        InitQoSDevice($dev,$i);
+    }
+}
+
+
+initHandles();
+
+print "Creating IP-BASED Rules\n" if ($debug>2);;
+
+foreach my $network (keys %Options::network)
+{
+    if ((defined $Options::method{$network}) && ($Options::method{$network} eq "ip"))
+    {
+        print "$network is ip based => Reserving range";
+        if (defined $Options::range{$network})
+        {
+            my ($start,$stop)=split(/-/,$Options::range{$network});
+            print " from $start to $stop\n" if ($debug>2);
+            $network=~m#(\d+\.\d+\.\d+\.).*#;
+            my $prefix=$1;
+            my $count=0;
+            for (my $ii=$start;$ii<=$stop;$ii++)
+            {
+                my $ip=$prefix.$ii;
+                $ip_status{$ip}{speed}=$Options::out_speed{$network}."/".$Options::in_speed{$network};
+                my $dspeed=$Options::out_speed{$network};
+                my $uspeed=$Options::in_speed{$network};
+                my $in_device=$Options::network{$network};
+                my  @out_devices;
+                if ($Options::out_device{$network} =~m/\[(.*),(.*)/)
+                {
+                    print "Network $network has more than one out_device\n" if ($debug > 5);
+                    my $deviceList=$Options::out_device{$network};
+                    $deviceList=~s#^\[##;
+                    $deviceList=~s#\]##;
+                    @out_devices = split (/,/,$deviceList);
+                }
+                else
+                {
+                    $out_devices[0]=$Options::out_device{$network};
+                }
+
+
+                my $in_class =(100+$reserved_classes+$count);
+                $ip_status{$ip}{in_class}=$in_class;
+                $count++;
+                my $out_class = (100+$reserved_classes+$count);
+                $ip_status{$ip}{out_class}=$out_class;
+                $count++;
+                print "Creating ip_status field for $ip\n" if ($debug > 3);
+                print "Creating NEW $QoStype $in_class / $out_class  QoS/Bandwidth rules for $ip with speed $dspeed / $uspeed\n" if ($debug>2);;
+                print "IN $in_device OUT \n" if ($debug > 2);
+                if ($QoStype =~ /^htb-/)
+                {
+                    TC("class add dev $in_device  parent 1:1 classid 1:$out_class htb rate 128kbit ceil ".$dspeed."kbit");
+                    TC("qdisc add dev $in_device parent 1:$out_class handle $out_class: sfq perturb 10");
+                    foreach my $out_device (@out_devices)
+                    {
+                        TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
+                        TC("qdisc add dev $out_device parent 1:$in_class handle $in_class: sfq perturb 10");
+                    }
+                    if ($QoStype eq "htb-ip")
+                    {
+                        my $handle=pop(@handles);
+                        if ((defined $handle) && ($handle ne ''))
+                        {
+                            $ip_status{$ip}{'handle'}=$handle;
+                            print "In - Filter $handle\n" if ($debug > 2);
+                            foreach my $out_device (@out_devices)
+                            {
+                                TC("filter add dev $out_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip src ".$ip." flowid 1:".$in_class);
+                            }
+                            print "Out - Filter $handle\n" if ($debug > 2);
+                            TC("filter add dev $in_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip dst ".$ip." flowid 1:".$out_class);
+                        }
+                        else
+                        {
+                            print "NO FREE HANDLES eli ei kahvoja :)\n";
+                            exit -1
+                        }
+                    }
+                }
+
+
+            }
+            $reserved_classes+=($stop-$start)*2+2;
+        }
+        else
+        {
+            print "Error $network is ip-based but no range defined\n";
+        }
+    }
+}
+
+print "Creating EXTERN-BASED Rules\n" ;
+
+open(IPC,">".$dir."/etc/ip-based-classes");
+
+foreach my $network (keys %Options::network)
+{
+    if ((defined $Options::method{$network}) && ($Options::method{$network} eq "extern"))
+    {
+        print "$network is extern based => Reserving range";
+        if (defined $Options::range{$network})
+        {
+            my ($start,$stop)=split(/-/,$Options::range{$network});
+            print " from $start to $stop\n";
+            $network=~m#(\d+\.\d+\.\d+\.).*#;
+            my $prefix=$1;
+            my $count=0;
+            for (my $ii=$start;$ii<=$stop;$ii++)
+            {
+                my $ip=$prefix.$ii;
+                $ip_status{$ip}{speed}=$Options::out_speed{$network}."/".$Options::in_speed{$network};
+                my $dspeed=$Options::out_speed{$network};
+                my $uspeed=$Options::in_speed{$network};
+                my $in_device=$Options::network{$network};
+                my  @out_devices;
+                if ($Options::out_device{$network} =~m/\[(.*),(.*)/)
+                {
+                    print "Network $network has more than one out_device\n" if ($debug > 5);
+                    my $deviceList=$Options::out_device{$network};
+                    $deviceList=~s#^\[##;
+                    $deviceList=~s#\]##;
+                    @out_devices = split (/,/,$deviceList);
+                }
+                else
+                {
+                    $out_devices[0]=$Options::out_device{$network};
+                }
+
+
+                my $in_class =(100+$reserved_classes+$count);
+                $ip_status{$ip}{in_class}=$in_class;
+                $count++;
+                my $out_class = (100+$reserved_classes+$count);
+                $ip_status{$ip}{out_class}=$out_class;
+                $count++;
+                print "Creating ip_status field for $ip:$in_class:$out_class\n" ;
+                print IPC "$ip:$in_class:$out_class\n";
+                print "Creating NEW $QoStype $in_class / $out_class  QoS/Bandwidth rules for $ip with speed $dspeed / $uspeed\n" if ($debug>2);;
+                print "IN $in_device OUT \n" if ($debug > 2);
+                if ($QoStype =~ /^htb-/)
+                {
+                    TC("class add dev $in_device  parent 1:1 classid 1:$out_class htb rate 128kbit ceil ".$dspeed."kbit");
+                    TC("qdisc add dev $in_device parent 1:$out_class handle $out_class: sfq perturb 10");
+                    foreach my $out_device (@out_devices)
+                    {
+                        TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
+                        TC("qdisc add dev $out_device parent 1:$in_class handle $in_class: sfq perturb 10");
+                    }
+                    if ($QoStype eq "htb-ip")
+                    {
+                        my $handle=pop(@handles);
+                        if ((defined $handle) && ($handle ne ''))
+                        {
+                            $ip_status{$ip}{'handle'}=$handle;
+                            print "In - Filter $handle\n" if ($debug > 2);
+                            foreach my $out_device (@out_devices)
+                            {
+                                TC("filter add dev $out_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip src ".$ip." flowid 1:".$in_class);
+                            }
+                            print "Out - Filter $handle\n" if ($debug > 2);
+                            TC("filter add dev $in_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip dst ".$ip." flowid 1:".$out_class);
+                        }
+                        else
+                        {
+                            print "NO FREE HANDLES eli ei kahvoja :)\n";
+                            exit -1
+                        }
+                    }
+                }
+
+
+            }
+            $reserved_classes+=($stop-$start)*2+2;
+        }
+        else
+        {
+            print "Error $network is ip-based but no range defined\n";
+        }
+    }
+}
+
+close (IPC);
+
+initClasses();
+
+$start_time=time;
+my $run_times=0;
+my $load_warnings=0;
+print "Starting main process\n";
+while ()
+{
+    if ((getCurrentLoad() > $Options::max_load) || ($load_warnings > 4))
+    {
+        printDebug(0,"CRIT","Too hard load (".getCurrentLoad().")or many warnings ($load_warnings) killing myself");
+        &SendAcctEnd();
+        exit;
+    }
+    elsif (getCurrentLoad() > $Options::warn_load)
+    {
+        printDebug(0,"WARN","Too hard load ".getCurrentLoad()."tryin to sleep warning #".$load_warnings);
+        $load_warnings++;
+        sleep(20);
+        printDebug(0,"WARN","Too hard load ".getCurrentLoad()."tryin to sleep warning #".$load_warnings);
+        sleep(20);
+        printDebug(0,"WARN","Too hard load ".getCurrentLoad()."tryin to sleep warning #".$load_warnings);
+        sleep(20);
+        printDebug(0,"WARN","Too hard load ".getCurrentLoad()."tryin to sleep warning #".$load_warnings);
+
+
+    }
+    elsif ($load_warnings ne 0)
+    {
+        printDebug(0,"INFO","Clearing load warnings ");
+        $load_warnings=0;
+    }
+    
+    
+    printDebug(0,"INFO","Current load".getCurrentLoad());
+
+    %mac_to_ip=();
+    my %oid=();
+    $start_time=time;
+
+    checkUselessTables();
+    checkUnwantedList();
+    my %devices_checked=();
+    my %unknown=();
+    open (F,">".$dir."/tmp/unknown_hosts.tmp");
+    foreach my $network (keys %Options::network)
+    {
+        print "Reading atTable from $Options::atHost{$network}\n" if ($debug >2);
+        if ( (!defined $Options::method{$network}) || ($Options::method{$network} eq "mac") )
+        {
+            open(FILE, "/proc/net/arp");
+            my @arp_table = <FILE>;
+            close FILE;
+            foreach (@arp_table)
+            {
+                my @arp_entry=split(/\s+/, $_);
+                if (
+                    ($arp_entry[2] eq "0x2") && ($arp_entry[5] eq $Options::network{$network})
+                   )
+                {
+                    my $device=$arp_entry[5];
+                    my $ip=$arp_entry[0];;
+                    my $mac=$arp_entry[3];;
+
+                    printDebug(3,"INFO","$device $ip $mac");
+
+                    $mac=~s/\s+//g;
+                    $mac_to_ip{$mac}=$ip;
+
+                    my $hosts=$1 if ($network=~m#(\d+\.\d+\.\d+)\.\d+/.*#);
+                    if  ($ip =~ /^$hosts/)
+                    {
+                        if ($mac ne "000000000000")
+                        {
+                            if (! defined $status{$mac}{use_qos} )
+                            {
+                                $status{$mac}{use_qos}=1;
+                            }
+                            $status{$mac}{alive}=time;
+                            $status{$mac}{port}=$device;
+                            if ((defined $status{$mac}{ip}) &&  ($status{$mac}{ip} ne ''))
+                            {
+                                if ($ip ne $status{$mac}{ip})
+                                {
+                                    #print "OLD IP $status{$mac}{ip}  new $ip\n";
+                                    if ((defined $status{$mac}{address}{$ip}) && ( ($status{$mac}{address}{$ip} - time) > 5 ))
+                                    {
+                                        print "MOVING IP FROM $status{$mac}{ip} TO  $ip\n";
+                                        $status{$mac}{ip}=$ip;
+                                    }
+                                    else
+                                    {
+                                        print "THIS HAS MORE THAN ONE IP NOT MOVING FROM $status{$mac}{ip} TO  $ip\n";
+                                        $status{$mac}{address}{$ip}=time;
+                                    }
+
+                                }
+                            }
+                            else
+                            {
+                                $status{$mac}{ip}=$ip;
+                            }
+                            $status{$mac}{network}=$network;
+
+                        }
+                    }
+                    else
+                    {
+                        if (
+                            (!defined $devices_checked{$Options::network{$network}}) 
+                            || 
+                            ($devices_checked{$Options::network{$network}} ne 1)
+                           )
+                        {
+
+                        }
+                        else
+                        {
+                            my $found=0;
+                            foreach my $network (keys %Options::network)
+                            {
+                                my $hosts=$1 if ($network=~m#(\d+\.\d+\.\d+)\.\d+/.*#);
+                                if  ($ip =~ /^$hosts/)
+                                {
+                                    $found=1;
+                                }
+                            }
+                            if ($found eq 0)
+                            {
+                                if (! defined $unknown{$mac})
+                                {
+                                    $unknown{$mac}=$ip;
+                                    print F "UNKNOWN:$ip:$mac:$device\n";
+                                }
+                            }
+                        }
+                    }
+                }
+
+                $devices_checked{$Options::network{$network}}=1;
+            }
+            printDebug(2,"INFO","DONE Reading atTable from $Options::atHost{$network}");
+        }
+        elsif ($Options::method{$network} eq "ip")
+        {
+
+        }
+
+    }
+    close(F);
+   
+   my $cmd= "cp ".$dir."/tmp/unknown_hosts.tmp ".$dir."/tmp/unknown_hosts"; 
+    `$cmd`;
+    
+    
+    print "FOUND ".scalar(keys %status)." TO AUTH\n";
+    open (F,">".$dir."/tmp/currently_online.tmp");
+    print F "PROGRAM:$version:".scalar(keys %status)."\n";
+    checkClearList($run_times);
+    my $i=1;
+    my @removeList=();
+
+    foreach my $mac (keys %status)
+    {
+        if (!defined $status{$mac}{alive})
+        {
+            print "FATAL: $mac has no time\n";
+        }
+        my $age=$start_time-$status{$mac}{alive};
+        print "$mac AGE = $age \n"  if ($debug >3);
+        $status{$mac}{recheck}=0;
+        if (defined $status{$mac}{lastAuth})
+        {
+            if (time-$status{$mac}{lastAuth} > $Options::recheck_time)
+            {
+                $status{$mac}{recheck}=1;
+                print "RECHECK $mac (".(time-$status{$mac}{lastAuth}).")\n";
+            }
+        }
+
+        if (! defined $status{$mac}{id} )
+        {
+            $status{$mac}{id}="";
+        }
+        if (! defined $status{$mac}{redirect} )
+        {
+            $status{$mac}{redirect}=0;
+        }
+        if (
+            ($status{$mac}{id} eq "")
+            ||
+            (
+             ($status{$mac}{redirect} eq "1")
+             &&
+             (! defined $status{$mac}{blacklisted})
+            )
+            ||
+            (
+             ($status{$mac}{redirect} eq "1") &&
+             (defined $status{$mac}{blacklisted}) &&
+             ($status{$mac}{blacklisted} eq 1) &&
+             (time-$status{$mac}{lastAuth} > 120)
+            )
+           )
+        {
+
+            $status{$mac}{id}=time if ($status{$mac}{id} eq "");
+            if (
+                (defined $status{$mac}{use_qos}) && ($status{$mac}{use_qos} eq "")
+               )
+            {
+                $status{$mac}{use_qos}=1
+            }
+            elsif (
+                   (defined $status{$mac}{use_qos}) && ($status{$mac}{use_qos} eq 0)
+                  )
+            {
+            }
+            else
+            {
+                $status{$mac}{use_qos}=1
+            }
+            my $radAns;
+
+            if ((time-$start_time) > (scalar(keys %status)*2))
+            {
+                print "Run is taking over ".(scalar(keys %status)*2)."s only authenticate from localhost\n";
+                $radAns=AuthenticateMAC($mac,"getinfo",$mac,"fast");
+            }
+            else
+            {
+                $radAns=AuthenticateMAC($mac,"getinfo",$mac);
+            }
+
+            $status{$mac}{lastAuth}=time;
+
+            print "START $mac $procs $i / ".scalar(keys %status)."\n" ;#if ($debug >1);
+
+            print "Answer $radAns\n" if ($debug > 2);
+            print  $status{$mac}{port};
+            if ( $radAns eq 2)
+            {
+                if (defined $status{$mac}{framed})
+                {
+                    print "$status{$mac}{framed}\n";
+                    my ($listId,$reason,$toHost) = split(/:/,$status{$mac}{framed});
+                    if (defined $listId)
+                    {
+                        if (defined $reason)
+                        {
+                            if (defined $toHost)
+                            {
+                                if ($listId eq "BLACKLIST")
+                                {
+                                    if (
+                                        ( defined $status{$mac}{blacklisted})
+                                        &&
+                                        ($status{$mac}{blacklisted} eq 1)
+                                       )
+                                    {
+                                        print F "BLACKLIST:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:$status{$mac}{customer}:$status{$mac}{speed}:NOQOS:NOQOS:$status{$mac}{port}:$age\n";
+
+                                    }
+                                    else
+                                    {
+                                        print "Redirecting $mac to $toHost because of $reason\n";
+                                        addBlackListItem($mac,$reason,$toHost);
+                                        $status{$mac}{redirect}=1;
+                                        $status{$mac}{blacklisted}=1;
+                                    }
+                                }
+                                elsif ($listId =~ /^KV_.*/)
+                                {
+                                    if (
+                                        (defined $status{$mac}{firewall})
+                                        &&
+                                        ($status{$mac}{firewall} eq 1)
+                                       )
+                                    {
+                                        print F "FIREWALLED:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:$status{$mac}{customer}:$status{$mac}{speed}:NOQOS:NOQOS:$status{$mac}{port}:$age\n";
+                                    }
+                                    else
+                                    {
+                                        $status{$mac}{firewall} = 1;
+                                        print "Adding $mac to $toHost because of $reason\n";
+                                        `iptables -I REDIRECT_LIST -j $listId -s $status{$mac}{ip}`;
+                                        `iptables -I REDIRECT_LIST -j $listId -d $status{$mac}{ip}`;
+                                        #         addFirewallItem($mac,$reason,$toHost);
+                                    }
+                                    goto NORMAL;
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    NORMAL:
+                    if ($status{$mac}{redirect} eq 1)
+                    {
+                        RemoveIPTablesRedirect($mac,$status{$mac}{id});
+                        if (
+                            (defined $status{$mac}{blacklisted}) && ($status{$mac}{blacklisted} eq 1)
+                           )
+                        {
+                            closeBlackListItem($mac);
+                            $status{$mac}{blacklisted}=0;
+                        }
+
+                    }
+
+
+                    CreateIPTablesTable($mac,$status{$mac}{id},$status{$mac}{ip},$status{$mac}{network});
+
+                    $status{$mac}{speed}="$Options::in_speed{$status{$mac}{network}}/$Options::out_speed{$status{$mac}{network}}" if (!exists $status{$mac}{speed});
+                    $createdRules++;
+                    if ((defined  $Options::use_qos) && ($Options::use_qos eq 0))
+                    {
+                    }
+                    else
+                    {
+                        if ($Options::require_auth{$status{$mac}{network}} eq 3)
+                        {
+                            print "NOT USING QOS for $mac";
+                            $status{$mac}{use_qos}=0;
+                        }
+                        else
+                        {
+                            $status{$mac}{use_qos}=1;
+                            CreateQoSRules($mac);
+                        }
+                    }
+                    if (
+                        ((defined  $Options::use_qos) && ($Options::use_qos eq 0)) ||
+                        ($status{$mac}{use_qos} eq 0)
+                       )
+                    {
+                        print F "START:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:$status{$mac}{customer}:$status{$mac}{speed}:NOQOS:NOQOS:$status{$mac}{port}:$age\n";
+                    }
+                    else
+                    {
+                        print F "START:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:$status{$mac}{customer}:$status{$mac}{speed}:$status{$mac}{in_class}:$status{$mac}{out_class}:$status{$mac}{port}:$age\n";
+                    }
+                    AccountMAC("start",$mac,$status{$mac}{host},$status{$mac}{id},$status{$mac}{id});
+                }
+            }
+            elsif ( $radAns eq 4)
+            {
+                print F "ERROR:RADIUS NOT ANSWERING !! IGNORING $mac \n" if ($debug >0);
+            }
+            else
+            {
+                if (
+                    (defined $Options::require_auth{$status{$mac}{network}})
+                    &&
+                    ($Options::require_auth{$status{$mac}{network}} eq 1)
+                   )
+                {
+                    print F "REDIRECT:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:::::$status{$mac}{port}:$age\n" ;
+                    if ($status{$mac}{redirect} ne 1)
+                    {
+                        CreateIPTablesRedirect($mac,$status{$mac}{id},$status{$mac}{ip},$status{$mac}{network});
+                    }
+                }
+                elsif (
+                       ($Options::require_auth{$status{$mac}{network}} eq 2) ||
+                       ($Options::require_auth{$status{$mac}{network}} eq 3)
+                      )
+                {
+                    my $start=0;
+                    my $stop=0;
+                    if (defined $Options::range{$status{$mac}{network}})
+                    {
+                        ($start,$stop)=split(/-/,$Options::range{$status{$mac}{network}});
+                    }
+                    if ($status{$mac}{ip}=~m#(\d+)\.(\d+)\.(\d+)\.(\d+)#)
+                    {
+                        if (($4 > $start ) && ($4 < $stop ))
+                        {
+                            print "RANGE HIT $4 > $start < $stop\n";
+                            print F "REDIRECT:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:RANGED_AUTH::::$status{$mac}{port}:$age\n";
+                            if ($status{$mac}{redirect} ne 1)
+                            {
+                                CreateIPTablesRedirect($mac,$status{$mac}{id},$status{$mac}{ip},$status{$mac}{network});
+                            }
+
+                        }
+                        else
+                        {
+                            print "Authentication is not required for network $status{$mac}{network}, now i'm setting speed to $Options::in_speed{$status{$mac}{network}} kbit/s / $Options::out_speed{$status{$mac}{network}}\n" if ($debug > 3);
+                            CreateIPTablesTable($mac,$status{$mac}{id},$status{$mac}{ip},$status{$mac}{network});
+                            $status{$mac}{speed}="$Options::in_speed{$status{$mac}{network}}/$Options::out_speed{$status{$mac}{network}}" if (!exists $status{$mac}{speed});
+                            $createdRules++;
+                            if ((defined  $Options::use_qos) && ($Options::use_qos eq 0))
+                            {
+                            }
+                            else
+                            {
+                                if  ($Options::require_auth{$status{$mac}{network}} eq 3)
+                                {
+                                    $status{$mac}{use_qos}=0;
+                                }
+                                else
+                                {
+                                    $status{$mac}{use_qos}=1;
+                                    CreateQoSRules($mac);
+                                }
+                            }
+                            if (
+                                $status{$mac}{use_qos} eq 1
+                               )
+                            {
+                                print F "RANGED_NOT_AUTH:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:NOT_AUTH:$status{$mac}{speed}:$status{$mac}{in_class}:$status{$mac}{out_class}:$status{$mac}{port}:$age\n";
+                            }
+                            else
+                            {
+                                print F "RANGED_NOT_AUTH:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:NOT_AUTH:$status{$mac}{speed}:NOQOS:NOQOS:$status{$mac}{port}:$age\n";
+                            }
+                            AccountMAC("start",$mac,$status{$mac}{host},$status{$mac}{id},$status{$mac}{id});
+                        }
+                    }
+                }
+                else
+                {
+                    print "Authentication is not required for network $status{$mac}{network}, now i'm setting speed to $Options::in_speed{$status{$mac}{network}} kbit/s / $Options::out_speed{$status{$mac}{network}}\n" if ($debug > 3);
+                    CreateIPTablesTable($mac,$status{$mac}{id},$status{$mac}{ip},$status{$mac}{network});
+                    $status{$mac}{speed}="$Options::in_speed{$status{$mac}{network}}/$Options::out_speed{$status{$mac}{network}}" if (!exists $status{$mac}{speed});
+                    $createdRules++;
+                    if ((defined  $Options::use_qos) && ($Options::use_qos eq 0))
+                    {
+                        print F "NOT_AUTH:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:NOT_AUTH:$status{$mac}{speed}:NOQOS:NOQOS:$status{$mac}{port}:$age\n";
+                    }
+                    else
+                    {
+                        if  ($Options::require_auth{$status{$mac}{network}} eq 4)
+                        {
+                            $status{$mac}{use_qos}=0;
+                        }
+                        else
+                        {
+                            $status{$mac}{use_qos}=1;
+                            CreateQoSRules($mac);
+                        }
+                        print F "NOT_AUTH:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:NOT_AUTH:$status{$mac}{speed}:$status{$mac}{in_class}:$status{$mac}{out_class}:$status{$mac}{port}:$age\n";
+                    }
+                    #sleep(2);
+
+                    AccountMAC("start",$mac,$status{$mac}{host},$status{$mac}{id},$status{$mac}{id});
+                }
+            }
+        }
+        elsif ($status{$mac}{recheck} eq 1)
+        {
+            $status{$mac}{'old_speed'}=$status{$mac}{'speed'};
+            my $radAns=AuthenticateMAC($mac,"getinfo",$mac);
+            if ( $radAns eq 2)
+            {
+                if ((defined $status{$mac}{framed}) && ($status{$mac}{firewall} ne 1))
+                {
+                    print "CLEARING $mac $status{$mac}{framed}\n";
+                    createMACRemoveList($mac);
+                    removeQoSRules($mac);
+                    $removedRules++;
+                    delete $status{$mac};
+
+                }
+                elsif ($status{$mac}{'old_speed'} ne $status{$mac}{'speed'})
+                {
+                    print "CLEARING $mac $status{$mac}{old_speed} ==> $status{$mac}{speed}\n";
+                    createMACRemoveList($mac);
+                    removeQoSRules($mac);
+                    $removedRules++;
+                    delete $status{$mac};
+                }
+            }
+            $status{$mac}{lastAuth}=time;
+        }
+        elsif ($status{$mac}{alive} > $start_time)
+        {
+
+            if ((defined  $Options::use_qos) && ($Options::use_qos eq 0))
+            {
+                print F "ALIVE:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:$status{$mac}{customer}:$status{$mac}{speed}:NOQOS:NOQOS:$status{$mac}{port}:$age\n" ;
+            }
+            else
+            {
+                print F "ALIVE:";
+                print F "$status{$mac}{ip}:";
+                print F "$mac:$status{$mac}{redirect}:";
+                if (defined $status{$mac}{customer})
+                {
+                    print F "$status{$mac}{customer}:";
+                }
+                else
+                {
+                    print F ":";
+                }
+
+                if (defined $status{$mac}{speed})
+                {
+                    print F "$status{$mac}{speed}:";
+                }
+                else
+                {
+                    print F ":";
+                }
+
+                if ((defined $status{$mac}{use_qos} ) &&($status{$mac}{use_qos} eq 1))
+                {
+                    if (!defined $status{$mac}{in_class})
+                    {
+                        print "$mac is missing in_class\n";
+                    }
+                    else
+                    {
+                        print F "$status{$mac}{in_class}:";
+                    }
+                    if (!defined $status{$mac}{out_class})
+                    {
+                        print "$mac is missing out_class\n";
+                    }
+                    else
+                    {
+                        print F "$status{$mac}{out_class}:";
+                    }
+                }
+                else
+                {
+                    print F "NOQOS:NOQOS:";
+                }
+                print F "$age\n" ;
+            }
+        }
+        elsif ( ($status{$mac}{id} ne "")  && ( ($age > 3600)  ) )
+        {
+            print F "STOP:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:";
+            if (defined $status{$mac}{customer})
+            {
+                print F "$status{$mac}{customer}:$status{$mac}{speed}:$status{$mac}{in_class}:$status{$mac}{out_class}:$status{$mac}{port}:$age\n" ;
+            }
+            else
+            {
+                print F "NOT_AUTH:NOT_AUTH:$status{$mac}{in_class}:$status{$mac}{out_class}:$status{$mac}{port}:$age\n" ;
+            }
+            print "STOP\n" if ($debug >0);
+            if ($status{$mac}{redirect} eq 1)
+            {
+                RemoveIPTablesRedirect($mac,$status{$mac}{id});
+                if (
+                    (defined $status{$mac}{blacklisted}) && ($status{$mac}{blacklisted} eq 1)
+                   )
+                {
+                    closeBlackListItem($mac);
+                }
+
+            }
+            my $tmp=RemoveIPTablesRule("MAC-COUNTER-$status{$mac}{network}",$mac,$status{$mac}{'ip'});
+            my @tmp2=@$tmp;
+            AccountMAC("stop",$mac,$status{$mac}{host},$status{$mac}{id},$status{$mac}{id},2,$tmp2[0],$tmp2[1]);
+            my ($clientid,$username,$region);
+            if (defined $status{$mac}{'customer'})
+            {
+                my $customer=$status{$mac}{'customer'};
+                ($clientid,$username,$region) = split('/',$customer);
+            }
+            if ((defined $clientid) && (exists $customer_classes{$clientid}) && ($clientid =~ /\d+/))
+            {
+                $customer_classes{$clientid}{$mac}=0;
+                #my $ref=$customer_classes{$clientid};
+                #foreach (keys %$ref)
+                #{
+                #    print STDERR "Current keys $_ for $status{$mac}{customer}\n"
+
+                #}
+                push (@removeList,$mac);
+
+            }
+            else
+            {
+                if ((defined  $Options::use_qos) && ($Options::use_qos eq 0))
+                {}
+                else
+                {
+                    print "Putting $status{$mac}{'in_class'},$status{$mac}{'out_class'},$status{$mac}{'handle'} back to queue $status{$mac}{'in_class'}\n";
+                }
+                push (@removeList,$mac);
+            }
+
+        }
+        else
+        {
+
+            my $info_str;
+            if ((defined $status{$mac}{blacklisted})
+                && ($status{$mac}{blacklisted} eq 1)
+               )
+            {
+                $info_str="BLACKLISTED:";
+            }
+            else
+            {
+                if  (
+                     (defined $status{$mac}{firewall}) &&
+                     
+                     ($status{$mac}{firewall} eq 1)
+                    )
+                {
+                    $info_str="FIREWALLED:";
+                }
+                else
+                {
+                    $info_str="ACTIVE:";
+                }
+            }
+
+            $info_str=$info_str."$status{$mac}{ip}:";
+            $info_str=$info_str."$mac:";
+            $info_str=$info_str."$status{$mac}{redirect}:";
+
+            if (defined $status{$mac}{customer})
+            {
+                $info_str=$info_str."$status{$mac}{customer}:";
+            }
+            else
+            {
+                $info_str=$info_str.":";
+            }
+
+            if (
+                ((defined $Options::use_qos) && ($Options::use_qos eq 0)) ||
+                ($status{$mac}{use_qos} eq 0) || 
+                ($status{$mac}{redirect} eq 1) &&
+                ( (! defined $status{$mac}{speed}) &&
+                  (! defined $status{$mac}{in_class}) &&
+                  (! defined $status{$mac}{out_class})
+                )
+               )
+            {
+                $info_str=$info_str."N/A:NOQOS:NOQOS:";
+            }
+            else
+            {
+                if (! defined $status{$mac}{speed})
+                {
+                    printDebug(0,"CRIT","$mac ERROR speed is not defined 2clearing");
+                    print "Check me $mac $status{$mac}{redirect} \n";
+                    createMACRemoveList($mac);
+                    removeQoSRules($mac);
+                    $info_str=$info_str.":::";
+                }
+                else
+                {
+                    $info_str=$info_str."$status{$mac}{speed}:";
+                    if (defined $status{$mac}{in_class})
+                    {
+                        $info_str=$info_str."$status{$mac}{in_class}:";
+                    }
+                    else
+                    {
+                        $info_str=$info_str.":";
+                    }
+                    if (defined $status{$mac}{out_class})
+                    {
+                        $info_str=$info_str."$status{$mac}{out_class}:";
+                    }
+                    else
+                    {
+                        $info_str=$info_str.":";
+                    }
+
+                }
+            }
+            $info_str=$info_str."$status{$mac}{port}:$age:";
+            print F $info_str."\n";
+        }
+        $i++;
+    }
+    
+    $run_times++;
+    print F "RUN ENDED";
+    close(F);
+
+ $cmd="cp ".$dir."/tmp/currently_online.tmp ".$dir."/tmp/currently_online";    
+`$cmd`;
+    my $iii=0;
+    foreach my $mac (@removeList)
+    {
+        print "Remove List is ".(scalar(@removeList)-$iii)." long\n";
+        $removedRules++;
+        if (((defined  $Options::use_qos) && ($Options::use_qos eq 0)) ||
+            ($status{$mac}{use_qos} eq 0)
+           )
+        {
+            print "NOQOS on $mac \n";
+        }
+        else
+        {
+            removeQoSRules($mac);
+        }
+        delete $status{$mac};
+        $iii++;
+    }
+
+    print time."   ".(time-$start_time)." Gone sleeping with ".scalar(keys %status)." active clients ".scalar(@freeclasses)."/".scalar(@handles)." $createdRules - $removedRules\n";
+    
+    saveEthernetDesc();
+    
+    
+    for (my $j=0;$j<10;$j++)
+    {
+        my $cbl_time=time;
+        my $cleared=0;
+        for (my $k=0;$k<6;$k++)
+        {
+            sleep(1);
+            
+            my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$block) = stat($dir."/tmp/clearBL");
+            if ($cbl_time ne $mtime)
+            {
+                print "Checking clear blacklist\n ";
+                open(CBL,$dir."/tmp/clearBL");
+                foreach (<CBL>)
+                {
+                    s/\s+//;
+                    my $mac=uc($_);
+                    print "Clearing $_ from blacklist";
+                    if ($status{$mac}{redirect} eq 1)
+                    {
+                        RemoveIPTablesRedirect($mac,$status{$mac}{id});
+                        if (
+                            (defined $status{$mac}{blacklisted}) && ($status{$mac}{blacklisted} eq 1)
+                           )
+                        {
+                            closeBlackListItem($mac);
+                            $status{$mac}{blacklisted}=0;
+                        }
+                    }
+                    $cleared=1;
+                }
+                close(CBL);
+                if ($cleared eq 1)
+                {
+                    open(CBL,">".$dir."/tmp/clearBL");
+                    close(CBL);
+                    $cleared=0;
+                }
+            }
+            $cbl_time=$mtime;
+        }
+
+        print ".$j.";
+    }
+    print "\n";
+
+}
+
+
+sub AuthenticateMAC
+{
+    my ($user,$pass,$mac,$mode)=@_;
+    $user=lc($user);
+    my $type=3;
+    foreach my $HOST (sort keys %secrets)  {
+        # create a Radius query object
+        #  print " $HOST $secrets{$HOST} $user $pass \n";
+        my $r = new Authen::Radius(
+                                   Host => $HOST,
+                                   Secret  => $secrets{$HOST}{'secret'}
+                                  );
+
+        # check password
+        $user="NOTVALID" if (!$user);
+        $pass=lc($user);
+        #        print "Adding Username $user, Password $pass\n";
+        if (defined $r)
+        {
+            $r->add_attributes (
+                                { Name => 'User-Name',Value => $user},
+                                { Name => 'User-Password',Value => $pass},
+                                { Name => 'NAS-Identifier',Value => "ROUTER"}
+                               );
+
+        
+
+            $r->send_packet (1) and $type = $r->recv_packet;
+
+            print "Type : $type\n" if ($debug > 2);
+
+            if ( (defined $type) && ( $type eq 2 ) ) {
+                
+                my  $i=1;
+                for $a ($r->get_attributes)
+                {
+                    $status{$mac}{framed}=();
+                    print "attr: name=$a->{'Name'} value=$a->{'Value'}\n";
+                    if ($a->{'Name'} eq "Filter-Id")
+                    {
+                        if ($a->{'Value'} =~/\d+\/\d+/)
+                        {
+                            $status{$mac}{speed}=$a->{'Value'};
+                        }
+                    }
+                    elsif ($a->{'Name'} eq "Reply-Message")
+                    {
+                        $status{$mac}{customer}=$a->{'Value'};
+                    }
+                    elsif ($a->{'Name'} eq "Framed-Route")
+                    {
+                        $status{$mac}{framed}=$a->{'Value'};
+                    }
+                    elsif ($a->{'Name'} eq "Login-LAT-Service")
+                    {
+                        $status{$mac}{siteid}=$a->{'Value'};
+                    }
+                }
+                print "$mac is verified via $HOST $type \n" if ($debug > 0);
+                return $type;
+            }
+            elsif ( (defined $type) && ( $type eq 3 ) )
+            {
+                print "$mac is declined by radius $HOST $type\n" if ($debug > 0);
+
+            }
+            elsif (defined $type)
+            {
+                print "Unable to determinate $mac status via radius $HOST $type\n" if ($debug > 0);
+            }
+            else
+            {
+                print "$mac status via radius $HOST type not defined\n" if ($debug > 0);
+            }
+        }
+    }
+    if (!defined $type)
+    {
+        $type=4;
+        print "Can't connect to radius server !!\n" if ($debug > 0);;
+    }
+    return $type;
+}
+
+
+
+sub TC
+{
+    my $cmdline=shift;
+    my $stop=shift;
+    if (!defined $stop)
+    {
+        $stop = 1;
+    }
+    my $cmd="tc ".$cmdline;
+    #my $cmd="tc qdisc show";
+    printDebug(3,"INFO","TC $cmd");
+    open(TCS,"$cmd 2>&1 |")  || die "Can't fork \n";
+    my $killme=0;
+    while (<TCS>)
+    {
+        if ( (/RTNETLINK answers: No such file or directory/) && ($stop eq 1) )
+        {
+            printDebug(0,"CRIT","$cmd !!! Allready missing !!!");
+            #$killme=1;
+
+        }
+        elsif ( (/RTNETLINK/) && ($stop eq 1) )
+        {
+            printDebug(0,"CRIT","$_  => kill me i'm in misery !!!");
+            `iptables -F COUNTERS`;
+            $killme=1;
+	  `iptables -F COUNTERS`;
+	    exit;
+        }
+        else
+        {
+            printDebug(0,"INFO","$_  => ??");
+        }
+
+    }
+    close(TCS);
+    
+    if ($killme)
+    {
+        &SendAcctEnd();
+        print;
+        exit;
+    }
+    
+    sleep(0.1);
+    return 1;
+    
+}
+
+sub initClasses
+{
+    print "Creating classes from ".(100+$reserved_classes)." to 4096\n";
+    for (my $i=100+$reserved_classes;$i<4096;$i++)
+    {
+        push(@freeclasses,$i);
+    }
+}
+
+sub initHandles
+{
+    my @hexes=(0,1,2,3,4,5,6,7,8,9,'a','b','c','d','e','f');
+    my @firsthexes=(1,2,3,4,5,6,7,88,9,'a','b','c','d','e','f');
+    my $count=0;
+    foreach my $hex1 (@firsthexes)
+    {
+        foreach my $hex2 (@hexes)
+        {
+            foreach my $hex3 (@hexes)
+            {   
+                $count++;
+                #print "Handle is ".$hex1.$hex2.$hex3."\n";
+                push(@handles,$hex1.$hex2.$hex3);
+            }
+        }
+    }
+    print "CREATED $count HANDLES these can support ".($count/2)." MACS\n";
+}
+
+sub CreateQoSRules
+{
+    my ($mac)=shift;
+    if ($mac!~/..\:..\:..\:..\:..\:../)
+    {
+        print "FATAL:($mac) IS NOT VALID\n";
+        exit;
+    }
+    my $cmd;
+    my $network=$status{$mac}{'network'};
+    my $speed=$status{$mac}{'speed'};
+    my $customer=$status{$mac}{'customer'};
+    my $in_device=$Options::network{$network};
+    my @out_devices;
+    if ($Options::out_device{$network} =~m/\[(.*),(.*)/)
+    {
+        print "Network $network has more than one out_device\n";
+        my $deviceList=$Options::out_device{$network};
+        $deviceList=~s#^\[##;
+        $deviceList=~s#\]##;
+        @out_devices = split (/,/,$deviceList);
+    
+    }
+    else
+    {
+        $out_devices[0]=$Options::out_device{$network};
+    }
+
+    my $dspeed;
+    my $uspeed;
+    if (defined $speed)
+    {
+        ($dspeed,$uspeed)= split('/',$speed);
+    }
+
+    $dspeed=$Options::out_speed{$status{$mac}{network}} if ($dspeed eq '') ;
+    $uspeed=$Options::in_speed{$status{$mac}{network}} if ($uspeed eq '') ;
+
+
+    my ($clientid,$username,$region);
+    if (defined $customer)
+    {
+        ($clientid,$username,$region) = split('/',$customer);
+    }
+
+    chomp($in_device);
+    if ((defined $in_device) )
+    {
+    }
+    else
+    {
+        foreach my $out_device (@out_devices)
+        {
+            print "FATAL:($mac) IN : $in_device or OUT: $out_device MISSING\n";
+        }
+        exit;
+    }
+
+    my $reuse=0;
+    my $in_class=();
+    my $out_class=();
+
+    if ((defined $clientid) && ($clientid =~ /\d+/))
+    {
+        print "Needs per customer queue\n" if ($debug > 2);
+        if (exists $customer_classes{$clientid})
+        {
+            print STDERR "This customer $clientid already has class \n";
+            $status{$mac}{'in_class'}=$customer_classes{$clientid}{in};
+            $status{$mac}{'out_class'}=$customer_classes{$clientid}{out};
+            $in_class=$status{$mac}{'in_class'};
+            $out_class=$status{$mac}{'out_class'};
+            $customer_classes{$clientid}{$mac}=time;
+            $customer_classes{$clientid}{usage}++;
+            $reuse=1;
+        }
+        else
+        {
+            $in_class=pop(@freeclasses);
+            $status{$mac}{'in_class'}=$in_class;
+            $out_class=pop(@freeclasses);
+            $status{$mac}{'out_class'}=$out_class;
+            $customer_classes{$clientid}{in}=$in_class;
+            $customer_classes{$clientid}{out}=$out_class;
+            $customer_classes{$clientid}{$mac}=time;
+            $customer_classes{$clientid}{usage}=1;
+        }
+    }
+    else
+    {
+        $in_class=pop(@freeclasses);
+        $status{$mac}{'in_class'}=$in_class;
+        $out_class=pop(@freeclasses);
+        $status{$mac}{'out_class'}=$out_class;
+    }
+
+    if (($in_class eq '') || ($out_class eq ''))
+    {
+        print "No free classes  !!!!\n";
+        &SendAcctEnd();
+        print "No free classes  !!!!\n";
+        exit -1;
+    }
+
+    if ($reuse eq 0)
+    {
+        print "Creating NEW $QoStype $in_class / $out_class  QoS/Bandwidth rules for $mac with speed $dspeed / $uspeed\n" ;
+        print "IN $in_device OUT @out_devices\n" if ($debug > 1);
+        if ($QoStype =~ /^htb-tbf/)
+        {
+            print "Creating TBF in rules\n" if ($debug > 0);
+            TC("class add dev $in_device  parent 1:1 classid 1:$out_class htb rate 128kbit ceil ".$dspeed."kbit");
+            TC("qdisc add dev $in_device parent 1:$out_class tbf rate ".$dspeed."kbit burst 10kb limit 25Kb mpu 1024");
+            print "Creating out rules\n" if ($debug > 0);
+            foreach my $out_device (@out_devices)
+            {
+                TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
+                TC("qdisc add dev $out_device parent 1:$in_class tbf rate ".$uspeed."kbit burst 10kb limit 25Kb mpu 1024");
+            }            
+        }
+        elsif ($QoStype =~ /^htb-/)
+        {
+            TC("class add dev $in_device  parent 1:1 classid 1:$out_class htb rate 128kbit ceil ".$dspeed."kbit");
+            TC("qdisc add dev $in_device parent 1:$out_class handle $out_class: sfq perturb 10");
+            foreach my $out_device (@out_devices)
+            {
+                TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
+                TC("qdisc add dev $out_device parent 1:$in_class handle $in_class: sfq perturb 10");
+            }
+        }
+        
+        else
+        {
+            print "Creating in rules\n" if ($debug > 2);
+            TC("class add dev $in_device  parent ".$QoSDevice{$in_device}{handle}.": classid ".$QoSDevice{$in_device}{handle}.":$out_class cbq rate ".$dspeed."kbit avpkt 1000 allot 1500 weight ".int($dspeed/10)."kbit prio 5 bounded");
+            TC("qdisc add dev $in_device parent ".$QoSDevice{$in_device}{handle}.":$out_class tbf rate ".$dspeed."kbit burst 20kb limit 25Kb");
+            print "Creating out rules\n" if ($debug > 2);
+            foreach my $out_device (@out_devices)
+            {
+                TC("class add dev $out_device  parent ".$QoSDevice{$out_device}{handle}.": classid ".$QoSDevice{$out_device}{handle}.":$in_class cbq rate ".$uspeed."kbit avpkt 1000 allot 1500 weight ".int($uspeed/10)."kbit prio 5 bounded");
+                TC("qdisc add dev $out_device parent ".$QoSDevice{$out_device}{handle}.":$in_class tbf rate ".$uspeed."kbit burst 20kb limit 25Kb");
+            }
+        }
+
+    }
+    else
+    {
+        print STDERR "Creating new filters for REUSE class $in_class / $out_class\n";
+    }
+    print STDERR "Creating new filters for class $in_class / $out_class $mac \n" if ($debug > 2);
+    if ($QoStype eq "htb-mac")
+    {
+        my $tmp_mac=$mac;
+        $tmp_mac=~m#(..):(..):(..):(..):(..):(..)#;
+        foreach my $out_device (@out_devices)
+        {
+            TC("filter add dev $out_device parent 1: prio $in_class protocol ip u32 match ip src $status{$mac}{ip} flowid ".$QoSDevice{$out_device}{handle}.":$in_class");
+            TC("filter add dev $in_device parent 1:  prio $out_class protocol ip u32 match u16 0x0800 0xFFFF at -2 match u32 0x$3$4$5$6 0xFFFFFFFF at -12 match u16 0x$1$2 0xFFFF at -14  flowid ".$QoSDevice{$in_device}{handle}.":$out_class");
+        }
+
+    }
+    elsif (($QoStype eq "htb-ip") || ($QoStype eq "htb-tbf"))
+    {
+        my $handle=pop(@handles);
+        if ((defined $handle) && ($handle ne ''))
+        {
+            $status{$mac}{'handle'}=$handle;
+            print "In - Filter $handle\n" if ($debug > 2);
+            foreach my $out_device (@out_devices)
+            {
+                TC("filter add dev $out_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip src ".$status{$mac}{ip}." flowid 1:".$in_class);
+            }
+            print "Out - Filter $handle\n" if ($debug > 2);
+            TC("filter add dev $in_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip dst ".$status{$mac}{ip}." flowid 1:".$out_class);
+        }
+        else
+        {
+            print "NO FREE HANDLES eli ei kahvoja :)\n";
+            &SendAcctEnd();
+            print "NO FREE HANDLES eli ei kahvoja :)\n";
+            exit -1
+        }
+    }
+    else
+    {
+        foreach my $out_device (@out_devices)
+        {
+            TC("filter add dev $out_device parent ".$QoSDevice{$out_device}{handle}.": protocol ip prio 16 u32 match ip src ".$status{$mac}{ip}." flowid ".$QoSDevice{$out_device}{handle}.":".$in_class);
+        }
+        TC("filter add dev $in_device parent ".$QoSDevice{$in_device}{handle}.": protocol ip prio 16 u32 match ip dst ".$status{$mac}{ip}." flowid ".$QoSDevice{$in_device}{handle}.":".$out_class);
+    }
+    
+
+}
+
+
+sub removeQoSRules
+{
+    my $mac=shift;
+    my $action=shift;
+    if (!defined $action)
+    {
+        $action="normal";
+    }
+
+    if (
+        ((defined  $Options::use_qos) && ($Options::use_qos eq 0)) ||
+        ($status{$mac}{use_qos} eq 0)
+       )
+    {
+        print "NOQOS on $mac\n";
+        return;
+    }
+    my $network=$status{$mac}{network};
+    my $cmd;
+    my $in_device=$Options::network{$network};
+    my @out_devices;
+    if ($Options::out_device{$network} =~m/\[(.*),(.*)/)
+    {
+        my $deviceList=$Options::out_device{$network};
+        $deviceList=~s#^\[##;
+        $deviceList=~s#\]##;
+        @out_devices = split (/,/,$deviceList);
+    }
+    else
+    {
+        $out_devices[0]=$Options::out_device{$network};
+    }
+    my $in_class=$status{$mac}{in_class};
+    my $out_class=$status{$mac}{out_class};
+    my ($clientid,$username,$region);
+    my $customer=$status{$mac}{'customer'};
+    if (defined $customer)
+    {
+        ($clientid,$username,$region) = split('/',$customer);
+        $customer_classes{$clientid}{usage}--;
+    }
+    if  ((! defined $clientid ) || ($customer_classes{$clientid}{usage} < 1))
+    {
+        my $handle=$status{$mac}{'handle'};
+        if (defined $handle)
+        {
+            print "($action) Deleting filters from handle $handle\n";
+            print "($action) Putting handle $status{$mac}{'handle'} back to queue \n";
+            if ($status{$mac}{'handle'} ne '')
+            {
+                unshift (@handles,$status{$mac}{'handle'});
+                TC("filter del dev $in_device parent 1: protocol ip prio 16 handle 800::$handle u32",1);
+                sleep(1) if ($action ne "fast");
+                foreach my $out_device (@out_devices)
+                {
+                    TC("filter del dev $out_device parent 1: protocol ip prio 16 handle 800::$handle u32",1);
+                }
+                sleep(1) if ($action ne "fast");
+            }
+            else
+            {
+                print STDERR "Missing HANDLE !!!!\n";
+            }
+            print STDERR "HANDLE NOT DEFINED!\n";
+        }
+        if ($QoStype =~/^htb-/)
+        {
+            if (defined $out_class)
+            {
+                print "($action)Deleting out_class $out_class\n";
+                TC("class del dev $in_device parent 1:1 classid 1:$out_class ");
+                unshift(@freeclasses,$out_class);
+                sleep(1) if ($action ne "fast");
+            }
+            else
+            {
+                print "NO OUT CLASS \n";
+            }
+            if (defined $in_class)
+            {
+                print "Deleting in_class $in_class\n";
+                foreach my $out_device (@out_devices)
+                {
+                    TC("class del dev $out_device parent 1:1 classid 1:$in_class ");
+                }
+                unshift(@freeclasses,$in_class);
+                sleep(1) if ($action ne "fast");
+            }
+            else
+            {
+                print "NO IN CLASS \n";
+            }
+        }
+        else
+        {
+            TC("class del dev $in_device parent ".$QoSDevice{$in_device}{handle}.":1 classid ".$QoSDevice{$in_device}{handle}.":$out_class ");
+            foreach my $out_device (@out_devices)
+            {
+                TC("class del dev $out_device parent ".$QoSDevice{$out_device}{handle}.":1 classid ".$QoSDevice{$out_device}{handle}.":$in_class ");
+            }
+        }
+        if  (defined $clientid)
+        {
+            delete $customer_classes{$clientid};
+        }
+    }
+    else
+    {
+        my $handle=$status{$mac}{'handle'};
+        print "($action)Deleting filters from handle $handle even though class is still inuse\n";
+        print "($action)Putting handle $status{$mac}{'handle'} back to queue \n";
+        if ($status{$mac}{'handle'} ne '')
+        {
+            unshift (@handles,$status{$mac}{'handle'});
+            TC("filter del dev $in_device parent 1: protocol ip prio 16 handle 800::$handle u32");
+            sleep(1) if ($action ne "fast");
+            foreach my $out_device (@out_devices)
+            {
+                TC("filter del dev $out_device parent 1: protocol ip prio 16 handle 800::$handle u32");
+            }
+            sleep(1) if ($action ne "fast");
+
+        }
+        else
+        {
+            print STDERR "Missing HANDLE\n";
+        }
+        print "($action)$clientid : $out_class & $in_class is still inuse $customer_classes{$clientid}{usage}\n";
+    }
+}
+
+
+sub InitQoSDevice
+{
+    my ($device,$handle)=@_;
+
+    TC(" qdisc del dev $device root",0);
+    if ($QoStype =~ /htb-/)
+    {
+        TC(" qdisc add dev $device root handle 1: htb default 4096");
+        TC(" class add dev $device parent 1: classid 1:1 htb rate 100Mbps ceil 1000Mbps");
+        TC(" class add dev $device parent 1:1 classid 1:4096 htb rate 100Mbps  ceil 1000Mbps");
+        TC(" qdisc add dev $device parent 1:4096 handle 4096: sfq perturb 10");
+    }
+    else
+    {
+        TC(" qdisc add dev $device root handle $handle: cbq bandwidth 100Mbit avpkt 1000");
+        TC(" class add dev $device parent $handle:0 classid :1 cbq bandwidth 100Mbit avpkt 1000 allot 1514 rate 100Mbit maxburst 500");
+    }
+
+}
+
+
+
+
+sub AccountMAC
+{
+    my ($func,$mac,$host,$port,$StartTime,$cause,$in,$out) =@_;
+    my $str;
+    if (defined $mac)
+    {
+        if (defined $main::region)
+        {
+            $str="echo \"User-Name=$mac\@$main::region";
+        }
+        else
+        {
+            $str="echo \"User-Name=$mac";
+        }
+    }
+    my $cid=$mac;
+    $cid=~s/://g;
+    $str=$str.",Calling-Station-Id=$cid" if (defined $mac);;
+    if (defined $func)
+    {
+        $str=$str.",Acct-Session-Id=$StartTime-$mac";
+        if ($func eq "start")
+        {
+            $str=$str.",Acct-Status-Type=1";
+        }
+        elsif ($func eq "stop")
+        {
+            $str=$str.",Acct-Status-Type=2";
+            $str=$str.",Acct-Terminate-Cause=$cause" if ($cause);
+            $str=$str.",Acct-Session-Time=".(time-$StartTime) if ($StartTime);
+            $str=$str.",Acct-Input-Octets=$in" if ($in);
+            $str=$str.",Acct-Output-Octets=$out" if ($out);
+
+        }
+        elsif ($func eq "alive")
+        {
+            $str=$str.",Acct-Status-Type=3";
+        }
+    }
+    else
+    {
+        return 0;
+    }
+
+
+    my $hostname=$Options::atHost;
+    if (defined $hostname)
+    {
+        chomp($hostname);
+    }
+
+    $str=$str.",Framed-IP-Address=".$mac_to_ip{$mac} if (defined $mac_to_ip{$mac}) && ($mac_to_ip{$mac} ne "");
+    $str=$str.",NAS-IP-Address=$hostname" if ((defined $hostname) && ($hostname ne ""));
+    $str=$str.",NAS-Identifier=$hostname" if ((defined $hostname) && ($hostname ne ""));
+    $str=$str.",NAS-Port=$port" if ( (defined $port) && ($port ne ""));
+    $str=$str.",NAS-Port-Id=$port" if ( (defined $port) && ($port ne ""));
+    $str=$str.",NAS-Port-Type=11";
+
+
+    $str=$str." \"| radclient -t 10 -r 2 $radius_host acct hello";
+    print $str."\n" if ($debug > 2);
+    newproc($str);
+    #`$str`;
+}
+
+
+#sub GetTrafficData
+#{
+#    my ($mac,$id,$ip) = @_;
+#    my @result=();
+#    my @rules=`iptables -L $mac-$id -n -v -x --line-numbers`;
+#   foreach (@rules)
+#    {
+#        my @tmp=split(/\s+/,$_);
+#        if ($tmp[7] eq $ip)
+#        {
+#            $result[0]=$tmp[2];
+#            #            print "Output is $result[0] ";;
+#        }
+#        elsif ($tmp[8] eq $ip)
+#        {
+#            $result[1]=$tmp[2];
+#            #print "Input is $result[1]";;
+#        }
+#
+#    }
+    #print "\n";
+#    return \@result;
+#}
+
+sub CreateIPTablesTable
+{
+    my ($mac,$id,$ip,$network) = @_;
+    if (($mac ne '') && ($id ne '') && ($ip ne ''))
+    {
+        #print "Creating table $mac-$id\n" if ($debug > 2);
+        #`iptables -N $mac-$id`;
+        #        `iptables -A $mac-$id -s $ip`;
+        #        `iptables -A $mac-$id -d $ip`;
+        #`iptables -A $mac-$id -j ACCEPT`;
+        if (
+            (defined $status{$mac}{firewall})
+            &&
+            ($status{$mac}{firewall} eq "STATEFULL")
+           )
+        {
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -m state --state ESTABLISHED,RELATED -d $ip -m mac --mac-source '!' $mac `;
+        }
+        else
+        {
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -d $ip -m mac --mac-source '!' $mac `;
+        }
+    }
+}
+
+sub CreateIPTablesRedirect
+{
+    my ($mac,$id) = @_;
+    my $www_host="192.168.5.1";
+    # print STDERR $www_host;
+
+    chomp($www_host);
+    if (($mac ne '') && ($id ne '') )
+    {
+        print "Creating Redirect rule for  $mac-$id\n";
+        `iptables -t nat -A REDIRECT_LIST  -j DNAT -m mac --mac-source $mac -p tcp --dport 80 --to $www_host:80`;
+        `iptables -t nat -A REDIRECT_LIST  -j DNAT -m mac --mac-source $mac -p tcp --dport 3128 --to $www_host:3129`;
+        `iptables -I REDIRECT_LIST -m mac --mac-source $mac -j REDIRECT_RULES`;
+        $status{$mac}{redirect}=1;
+    }
+}
+
+sub RemoveIPTablesFirewall
+{
+    my ($mac,$id) = @_;
+    if (($mac ne '') && ($id ne ''))
+    {
+        AGAIN_FW:
+            my @row2=`iptables -L REDIRECT_LIST --line-numbers -n -v`;
+            foreach (@row2) {
+                chomp();
+                if ($_=~m#^(\d+).*(REDIRECT_RULES)\s+all.*\*\s+(.*)\s+#)
+                {
+                    print "RULES-$1-$2-$3-\n";
+                    if ($status{$mac}{ip} eq $3)
+                    {
+                        #`iptables -D REDIRECT_LIST $1`;
+                        goto AGAIN_FW;
+                    }            
+                }
+            }
+            $status{$mac}{redirect}=0;
+    }
+        
+}
+
+sub RemoveIPTablesRedirect
+{
+    my ($mac,$id) = @_;
+    if (($mac ne '') && ($id ne ''))
+    {
+        AGAIN:
+            my @row=`iptables -L REDIRECT_LIST -t nat --line-numbers -n -v`;
+            foreach (@row) {
+                if ($_=~m#^(\d+)\s+.*MAC\s+(.*)\s+tcp\s+dpt:80#)
+                {
+                    if (uc($mac) eq $2)
+                    {
+                        print "Removed redirection for $mac\n";
+                        `iptables -t nat -D REDIRECT_LIST $1`;
+                        goto AGAIN;
+                    } }
+                if ($_=~m#^(\d+)\s+.*MAC\s+(.*)\s+tcp\s+dpt:3128#)
+                {
+                    if (uc($mac) eq $2)
+                    {
+                        print "Removed squid redirection for $mac\n";
+                        `iptables -t nat -D REDIRECT_LIST $1`;
+                        goto AGAIN;
+
+                    }    
+                }
+            }
+
+            AGAIN2:
+            my @row2=`iptables -L REDIRECT_LIST --line-numbers -n -v`;
+            foreach (@row2) {
+                chomp();
+                if ($_=~m#^(\d+).*(REDIRECT_RULES)\s+all.*MAC\s+(.*)\s+#)
+                {
+                    print "RULES-$1-$2-$3-\n";
+                    if (uc($mac) eq $3)
+                    {
+                        `iptables -D REDIRECT_LIST $1`;
+                        goto AGAIN2;
+                    }            
+                }
+            }
+
+            $status{$mac}{redirect}=0;
+    }
+}
+
+sub RemoveIPTablesRule
+{
+    my ($chain,$rule,$ip) =@_;
+
+    my @remove=();
+    my @result=();
+    my @rules=`iptables -L $chain -n -v -x --line-numbers`;
+
+    foreach (@rules)
+    {
+
+        my @tmp=split(/\s+/,$_);
+        if ((defined $ip) && ($ip ne ''))
+        {
+            #print "$tmp[8],$tmp[9],$tmp[10],$ip\n";
+            
+            if ((defined $tmp[8]) && ($tmp[8] eq $ip))
+            {
+                $result[0]=$tmp[2];
+                print "Output is $result[0] " if ($debug > 3);
+            }
+            elsif ((defined $tmp[9]) && ($tmp[9] eq $ip))
+            {
+                $result[1]=$tmp[2];
+                print "Input is $result[1]" if ($debug > 3);
+            }
+        }
+        
+        
+        if  (defined $tmp[11])
+        {
+            if ($tmp[11] eq "RELATED,ESTABLISHED")
+            {
+                if ($tmp[14] eq $rule)
+                {
+                    push(@remove,$tmp[0]);
+                    print "REMOVE LINE $tmp[0] from $chain\n" if ($debug > 0);
+                }
+            }
+            elsif ($tmp[11] eq "!")
+            {
+                if ($tmp[12] eq $rule)
+                {
+                    push(@remove,$tmp[0]);
+                    print "REMOVE LINE $tmp[0] from $chain\n" if ($debug > 0);
+                }
+            }
+            elsif ($tmp[11] eq $rule)
+            {
+                push(@remove,$tmp[0]);
+                print "REMOVE LINE $tmp[0] from $chain\n" if ($debug > 0);
+            }
+            else
+            {
+
+            }
+        }
+        elsif ($tmp[3] eq $rule)
+        {
+            push(@remove,$tmp[0]);
+            print "REMOVE LINE $tmp[0] from $chain\n " if ($debug > 1);
+        }
+    }
+    foreach my $line (sort {$b <=> $a} @remove)
+    {
+        `iptables -D $chain $line`;
+    }
+    
+    return \@result;
+}
+
+#sub RemoveIPTablesTable
+#{
+#    my ($mac,$id) = @_;
+#    if (($mac ne '') && ($id ne ''))
+#    {
+#        print "Removing table $mac-$id\n";
+#        `iptables -F $mac-$id`;
+#        `iptables -X $mac-$id`;
+#    }
+#}
+
+
+sub SendAcctEnd
+{
+    my ($signame)=@_;
+    my $netcount=0;
+    my $maccount=0;
+    foreach my $network (keys %Options::network)
+    {
+        $netcount++;
+        printDebug(0,"INFO",$netcount."/".scalar(keys %Options::network)." networks to go");
+        foreach my $mac (keys %status)
+        {
+            my $tmp;#=GetTrafficData($mac,$status{$mac}{id},$status{$mac}{ip});
+            my @tmp2=();; #=@$tmp;
+            printDebug(0,"INFO",$maccount."/".scalar(keys %status)." macs to go");
+            $maccount++;
+            if ($status{$mac}{redirect} eq 1)
+            {
+                RemoveIPTablesRedirect($mac,$status{$mac}{id});
+                if (
+                    (defined $status{$mac}{blacklisted}) && ($status{$mac}{blacklisted} eq 1)
+                   )
+                {
+                    closeBlackListItem($mac);
+                }
+            }
+            else
+            {
+                $tmp=RemoveIPTablesRule("MAC-COUNTER-$status{$mac}{network}",$mac,$status{$mac}{ip});
+                @tmp2=@$tmp;
+                print "$mac => Output $tmp2[0] : Input $tmp2[1]\n";
+                if (
+                    ((defined  $Options::use_qos) && ($Options::use_qos eq 0)) ||
+                    ($status{$mac}{use_qos} eq 0)
+                   )
+                {
+                    print "NOQOS on $mac\n";
+                }
+                else
+                {
+                    removeQoSRules($mac,"fast");
+                }
+                #RemoveIPTablesTable($mac,$status{$mac}{id});
+            }
+            AccountMAC("stop",$mac,$status{$mac}{host},$status{$mac}{id},$status{$mac}{id},6,$tmp2[0],$tmp2[1]);
+            delete $status{$mac};
+        }
+        `iptables -F MAC-COUNTER-$network`;
+        RemoveIPTablesRule("COUNTERS","MAC-COUNTER-$network");
+        `iptables -X MAC-COUNTER-$network`;
+    }
+    close(LOCK);
+    `rm $lock_file`;
+    die "$signame";
+}
+
+
+
+
+sub checkConfigChange
+{
+
+    my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$block) = stat($cfg_file);                                           
+    if ($check_time ne $mtime)
+    {
+        if ( ($mode) && ($mode ne 32768) )
+        {
+            print "Config changed please read it again!!";
+            readConfig($cfg_file);
+            $check_time=$mtime;
+        }
+    }
+}
+
+sub createMACRemoveList
+{
+    my $mac=shift;
+    my @removeList=();
+    print F "CLEARING:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:$status{$mac}{customer}:$status{$mac}{speed}:$status{$mac}{in_class}:$status{$mac}{out_class}:0\n" if ($debug >1);
+    print "Clearing $mac\n";
+    if ($status{$mac}{redirect} eq 1)
+    {
+        RemoveIPTablesRedirect($mac,$status{$mac}{id});
+        if (
+            (defined $status{$mac}{blacklisted}) && ($status{$mac}{blacklisted} eq 1)
+           )
+        {
+            closeBlackListItem($mac);
+        }
+
+    }
+    if ((defined $status{$mac}{firewall}) && ($status{$mac}{firewall} eq 1))
+    {
+        RemoveIPTablesFirewall($mac,$status{$mac}{id});
+    }
+
+    my $tmp=RemoveIPTablesRule("MAC-COUNTER-$status{$mac}{network}",$mac,$status{$mac}{'ip'});
+    my @tmp2=@$tmp;
+    AccountMAC("stop",$mac,$status{$mac}{host},$status{$mac}{id},$status{$mac}{id},2,$tmp2[0],$tmp2[1]);
+    my ($clientid,$username,$region);
+    if (defined $status{$mac}{'customer'})
+    {
+        my $customer=$status{$mac}{'customer'};
+        ($clientid,$username,$region) = split('/',$customer);
+    }
+
+    if ((defined $clientid) &&(exists $customer_classes{$clientid}) && ($clientid =~ /\d+/))
+    {
+        $customer_classes{$clientid}{$mac}=0;
+        push (@removeList,$mac);
+    }
+    else
+    {
+        if (
+            (defined $status{$mac}{'handle'}) &&
+            ($status{$mac}{'handle'} ne '')
+           )
+        {
+            print "Putting handle $status{$mac}{'handle'} back to queue\n";
+            unshift (@handles,$status{$mac}{'handle'});
+        }
+        if  (
+             (defined $status{$mac}{'in_class'}) &&
+             ($status{$mac}{'in_class'} ne ''))
+        {
+            print "Putting in_class $status{$mac}{'in_class'} back to queue\n";
+            unshift (@freeclasses,$status{$mac}{'in_class'});
+        }
+        if (
+            (defined $status{$mac}{'out_class'}) &&
+            ($status{$mac}{'out_class'} ne '')
+           )
+        {
+            print "Putting out_class $status{$mac}{'out_class'} back to queue\n";
+            unshift (@freeclasses,$status{$mac}{'out_class'});
+        }
+        push (@removeList,$mac);
+    }
+    return \@removeList;
+}
+
+
+
+sub checkClearList
+{
+    my $runs=shift;
+    my $single_mac=shift;
+    if ($runs < 1)
+    {
+        `rm $clearList`;
+    }
+    my @removeList=();
+    if (-e $clearList)
+    {
+        open(CLEARLIST,$clearList);
+        while(<CLEARLIST>)
+        {
+            my @temp=split(":",$_);
+            my $mac="$temp[2]:$temp[3]:$temp[4]:$temp[5]:$temp[6]:$temp[7]";
+            #$mac=lc($mac);
+            my $ref=createMACRemoveList($mac);
+            @removeList=@$ref;
+        }
+        close(CLEARLIST);
+        
+        foreach my $mac (@removeList)
+        {
+            print "Remove List is ".scalar(@removeList)." long\n";
+            removeQoSRules($mac);
+            $removedRules++;
+            delete $status{$mac};
+        }
+        `rm $clearList`;
+    }
+}
+
+
+sub checkUnwantedList
+{
+    printDebug(2,"INFO","CHECKING UNWANTED LIST");
+    if (-e $unwantedList)
+    {
+        open(UNWANTEDLIST,$unwantedList);
+        while(<UNWANTEDLIST>)
+        {
+            if (/\d+\.\d+\.\d+\.\d+/)
+            {
+                chomp();
+                if ((!defined $unwantedHash{$_}) || ($unwantedHash{$_} ne 1))
+                {
+                    $unwantedHash{$_}=1;
+                    printDebug(0,"INFO","Adding $_ to UNWANTED LIST");
+                    `iptables -A FORWARD_UNWANTED -j DROP -s $_ `;
+                }
+                else
+                {
+                    printDebug(3,"INFO","$_ is already added to UNWANTED LIST");
+                }
+            }
+
+        }
+        close(UNWANTEDLIST);
+    }
+}
+
+sub checkUselessTables
+{
+
+    print STDERR "Checking useless chains\n";
+    my @chains=`iptables -L -n --line-numbers`;
+    my $found=0;
+    NEXT:
+        foreach my $chain (@chains)
+        {
+            $found=2;
+            if ($chain=~m#^Chain\s+(.*)-(\d+)\s+\(\d+ references\)#)
+            {
+                $found=0;
+                print STDERR "$chain is VALID\n";
+                foreach my $mac (keys %status)
+                {
+                    $mac=uc($mac);
+                    #            Chain 00:02:96:02:3B:47-1106293033 (0 references)
+                    if ($mac eq $1)
+                    {
+                        print STDERR "$1 $2 $3 => $status{$mac}{id} \n";
+                        $found=1;
+                        next();
+                        goto NEXT;
+                    }
+                }
+            }
+            else
+            {
+                #print STDERR "$chain is not valid\n";
+                next();
+                goto NEXT;
+            }
+            if ($found eq 0)
+            {
+                print STDERR "$chain is useless";
+                if ($chain=~m#Chain\s+(.*)-(\d+) \((\d+) references\)#)
+                {
+                    `iptables -X $1-$2`;
+                    #sleep(1);
+                }
+            }
+            print $chain." STATUS ".$found."\n";
+        }
+}
+
+
+sub checkUselessChains
+{
+    my $table=shift;
+    print STDERR "Checking useless nat chains\n";
+    my @chains=`iptables  -n --line-numbers -L $table`;
+    foreach my $line (@chains)
+    {
+        #        print $line;
+        if ($line=~m#(\d+).*MAC\s+((?:..\:){5}..)#)
+        {
+            if ($1 ne  '')
+            {
+                print "$2 is in $table line-number $1\n";
+            }
+        }
+    }
+}
+
+
+sub saveEthernetDesc
+{
+    if (-e "var/run/iptraf/ethernet.desc")
+    {
+	my $cmd="cat $dir/etc/ethernet.desc/$main::region.desc > /var/run/iptraf/ethernet.desc";
+
+    `$cmd`;
+    open(F,'>>/var/run/iptraf/ethernet.desc');
+    foreach my $mac (keys %status)
+    {
+        my $mac_no_dots=lc($mac);
+        $mac_no_dots=~s/\://g;
+        if ($status{$mac}{redirect})
+        {
+            print F "$mac_no_dots:REDIRECTED,N/AA,N/A,N/A\n";
+        }
+        else
+        {
+            print F "$mac_no_dots:";
+            if (defined $status{$mac}{customer})
+            {
+                print F "$status{$mac}{customer},";
+                
+            }
+            else
+            {
+                print F ",";
+            }
+            
+
+            if (
+                (
+                 (defined  $Options::use_qos) && ($Options::use_qos eq 0)
+                )
+                ||
+                (! defined $status{$mac}{use_qos} ) 
+                || ($status{$mac}{use_qos} eq 0)
+               )
+            {
+                print F "UNLIMITED,NOQOS,NOQOS\n";
+            }
+            else
+            {
+                print F "$status{$mac}{speed},";
+                if (! defined $status{$mac}{in_class})
+                {
+                    print "$mac is MISSING IN CLASS $status{$mac}{use_qos}";
+                }
+                print F "$status{$mac}{in_class},";
+                if (! defined $status{$mac}{out_class})
+                {
+                    print "$mac is MISSING OUT CLASS";
+                }
+                print F "$status{$mac}{out_class}\n";
+            }
+        }
+    }
+    
+    close(F);
+    }
+
+}
+
+sub REAPER {
+    my $child;
+    while (($child = waitpid(-1, WNOHANG)) > 0) {
+        if (exists $working->{$child}) {
+            $procs --;
+            push(@deadpids, $child);
+            #            print STDERR "REAPED $child\n";
+            delete $working->{$child};
+
+        }
+        die "We've reaped more than we've own!"  if ($procs < 0);
+    }
+}
+
+
+END {
+}
