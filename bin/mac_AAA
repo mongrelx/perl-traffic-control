@@ -164,7 +164,7 @@ my $start_time;
 printDebug(0,"INFO","Reading radius secrets");
 # get the radius shared secret
 my( %secrets, ) ;
-open SECRETS, "</etc/freeradius/clients.conf"  # CHANGE this to correct path
+open SECRETS, "<$dir/etc/radius.conf"  # CHANGE this to correct path
 or  die "no radius.secrets file \n";
 while (<SECRETS>) {
     s/\#.*$// ;
@@ -1148,7 +1148,11 @@ while ()
     print time."   ".(time-$start_time)." Gone sleeping with ".scalar(keys %status)." active clients ".scalar(@freeclasses)."/".scalar(@handles)." $createdRules - $removedRules\n";
     
     saveEthernetDesc();
-    
+    if (!-e $dir."/tmp/clearBL")
+    {
+ open(CBL,">".$dir."/tmp/clearBL");
+close(CBL);
+} 
     
     for (my $j=0;$j<10;$j++)
     {

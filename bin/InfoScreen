@@ -126,7 +126,8 @@ if ($opts{'s'})
             my $outp=$2;
 
             my $info = virtual RRD::Info($clientid,@$_[4]);
-            my $current_time = gettimeofday() if $opts{p};;
+           my $rrd; 
+		my $current_time = gettimeofday() if $opts{p};;
             $info->CheckPathsVirtual($1);
             if (
                 (!defined $inb) ||
@@ -141,7 +142,14 @@ if ($opts{'s'})
             else
             {
                 print "UPDATING $clientid $inb/$inp $outb/$outp\n" if ($debug > 0);
-                $info->{Function}->Update($inb,$inp,$outb,$outp);
+                $rrd->update(time=>$current_time,
+				values => {
+					"inb" => $inb,
+					"inp" => $inp,
+					"outb" => $outb,
+					"outp" => $outp	
+				}); 
+#		$info->{Function}->Update($inb,$inp,$outb,$outp);
             }
             if ($opts{g})
             {
@@ -1051,7 +1059,7 @@ sub blacklistExit {
 sub arping_stats #FOLD00
 {
     my ($clientid,$device,$ip,$mac)=@_;
-    my $arping="/opt/perl-traffic-control/bin/arping";
+    my $arping="/usr/sbin/arping";
     if ( $opts{'s'} && $opts{'a'})
     {
         my $total=0;
