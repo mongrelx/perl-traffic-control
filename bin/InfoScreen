@@ -2,6 +2,9 @@
 
 use strict;
 use vars qw($VERSION);
+use LWP::Simple; 
+use JSON        qw(decode_json);
+use Try::Tiny;
 use Curses::Application;
 push(@INC,'/opt/perl-traffic-control/lib/');
 use lib qw(/opt/perl-traffic-control/lib);
@@ -44,7 +47,6 @@ glob %main::QoSDevice=();
 my $mode=10;
 glob $main::users_string="";
 my $database=0;
-
 
 my %opts;
 getopts('spga', \%opts);
@@ -455,9 +457,19 @@ sub showdetails { #FOLD00
         $w->getWidget("INFO")->setField(VALUE => "Kohde : $row[6]\nPortti : $row[4]");
     }
 
-    
-    
-    $app->execForm('Details');
+
+   my $url= "http://www.macvendorlookup.com/api/v2/".$info[2];
+ my $json =get($url);
+my $vendor = $url.$json;
+if (defined $json)
+{
+try
+{
+my $decoded = decode_json($json);   
+$vendor = $decoded->[0]{'company'};
+}} 
+$w->getWidget("INFO")->setField(VALUE => 'VENDOR : '.$vendor);
+$app->execForm('Details');
 }
 
 sub editInfo {
