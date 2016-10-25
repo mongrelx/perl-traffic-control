@@ -1825,7 +1825,7 @@ sub CreateIPTablesTable
            )
         {
             `iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
-            `iptables -A MAC-COUNTER-$network -j ACCEPT -m state --state ESTABLISHED,RELATED -d $ip -m mac --mac-source '!' $mac `;
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -m state --state ESTABLISHED,RELATED -d $ip ! -m mac  --mac-source  $mac `;
         }
         else
         {
