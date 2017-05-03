@@ -39,7 +39,7 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> apt-get install libdbi-perl librrdtool-oo-perl
 <li> apt-get install libdbd-mysql libdbd-mysql-perl libmysqlclient18
 <li> apt-get install libconvert-ber-perl mysql-server freeradius-mysql
-<li> apt-get install libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
+<li> apt-get install libcurses-perl libjson-perl libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
 <li> cpan -i Curses::Application
 <li> cpan -i RRD
 <li> cd /opt/
@@ -53,7 +53,6 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> mysqladmin create ptc_auth -p
 <li> mysql -p<br>
 mysql>GRANT ALL PRIVILEGES   ON ptc.* TO 'ptc_user'@'%'   IDENTIFIED BY 'ptc_pass';
-mysql> 
 </ul>
 <h3>Web-server</h3>
 <h3>Interfaces</h3>
