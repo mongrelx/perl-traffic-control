@@ -71,7 +71,7 @@ if (defined $opts{'s'})
 #####################################################################
 
 
-glob $main::debug=0;
+glob $main::debug=1;
 my $debug=$main::debug;
 my $ptc_db="localhost";
 my $ptc_table="ptc";
@@ -451,24 +451,20 @@ sub showdetails { #FOLD00
     }
     
     
-    my $sth_ptc= $dbh_ptc->prepare("SELECT * FROM maclist WHERE macaddr='".$info[2]."'");
-    $sth_ptc->execute;
-    while ( my @row = $sth_ptc->fetchrow_array ) {
-        $w->getWidget("INFO")->setField(VALUE => "Kohde : $row[6]\nPortti : $row[4]");
-    }
-
-
+    
    my $url= "http://www.macvendorlookup.com/api/v2/".$info[2];
  my $json =get($url);
-my $vendor = $url.$json;
+
 if (defined $json)
 {
+    my $vendor;
+    $vendor=$url.$json;
 try
 {
 my $decoded = decode_json($json);   
 $vendor = $decoded->[0]{'company'};
+
 }} 
-$w->getWidget("INFO")->setField(VALUE => 'VENDOR : '.$vendor);
 $app->execForm('Details');
 }
 
@@ -827,8 +823,6 @@ sub editExit {
                     if ((defined $rec{RadReply}) && ($rec{RadReply} =~ /^\d+\/.*$/))
                     {
                         $rec{RadReply}=$rec{RadReply}."/InfoScreen";
-                        #                        my $tmep="fsdfW";
-                        #my $msg=\$tmep;
                         if (
                             (defined $Options::dbh_dbase) &&
                             (defined $Options::dbh_host) &&
@@ -842,7 +836,7 @@ sub editExit {
                             if ($msg eq 1)
                             {
                                 #dialog('Saved', BTN_OK, 'Saved new information!',
-                                #       qw(white red yellow));
+                                #      qw(white red yellow));
                                 $app->delForm('Edit');
                                 my $w = $app->getForm('Main')->getWidget('lstAuth');
                                 $app->execute;
@@ -1071,7 +1065,7 @@ sub blacklistExit {
 sub arping_stats #FOLD00
 {
     my ($clientid,$device,$ip,$mac)=@_;
-    my $arping="/usr/sbin/arping";
+    my $arping="/usr/bin/arping";
     if ( $opts{'s'} && $opts{'a'})
     {
         my $total=0;

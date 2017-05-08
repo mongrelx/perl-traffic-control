@@ -1219,8 +1219,9 @@ sub AuthenticateMAC
         # check password
         $user="NOTVALID" if (!$user);
         $pass=lc($user);
-        #        print "Adding Username $user, Password $pass\n";
-        if (defined $r)
+        print "Authenticating Username $user, Password $pass\n";
+  $pass="getinfo";      
+if (defined $r)
         {
             $r->add_attributes (
                                 { Name => 'User-Name',Value => $user},
@@ -1777,7 +1778,7 @@ sub AccountMAC
     $str=$str.",NAS-Port-Type=11";
 
 
-    $str=$str." \"| radclient -t 10 -r 2 $radius_host acct hello";
+    $str=$str." \"| radclient -t 10 -r 2 $radius_host acct $secrets{localhost}{'secret'}";
     print $str."\n" if ($debug > 2);
     newproc($str);
     #`$str`;
@@ -1813,7 +1814,7 @@ sub CreateIPTablesTable
     my ($mac,$id,$ip,$network) = @_;
     if (($mac ne '') && ($id ne '') && ($ip ne ''))
     {
-        #print "Creating table $mac-$id\n" if ($debug > 2);
+        print "Creating table $mac-$id\n" ;#if ($debug > 2);
         #`iptables -N $mac-$id`;
         #        `iptables -A $mac-$id -s $ip`;
         #        `iptables -A $mac-$id -d $ip`;
@@ -1824,13 +1825,13 @@ sub CreateIPTablesTable
             ($status{$mac}{firewall} eq "STATEFULL")
            )
         {
-            `iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
-            `iptables -A MAC-COUNTER-$network -j ACCEPT -m state --state ESTABLISHED,RELATED -d $ip ! -m mac  --mac-source  $mac `;
+            #`iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
+            #`iptables -A MAC-COUNTER-$network -j ACCEPT -m state --state ESTABLISHED,RELATED -d $ip ! -m mac  --mac-source  $mac `;
         }
         else
         {
             `iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
-            `iptables -A MAC-COUNTER-$network -j ACCEPT -d $ip -m mac --mac-source '!' $mac `;
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -d $ip  -m mac ! --mac-source $mac `;
         }
     }
 }

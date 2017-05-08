@@ -53,6 +53,7 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> mysqladmin create ptc_auth -p
 <li> mysql -p<br>
 mysql>GRANT ALL PRIVILEGES   ON ptc.* TO 'ptc_user'@'%'   IDENTIFIED BY 'ptc_pass';
+<li> mysql -p ptc < /etc/freeradius/sql/mysql/schema.sql
 </ul>
 <h3>Web-server</h3>
 <h3>Interfaces</h3>

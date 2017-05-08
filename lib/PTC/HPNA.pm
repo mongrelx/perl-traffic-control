@@ -118,9 +118,9 @@ sub addClient
         $speed="1024/1024";
     }
 
-    $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$username','Password','$password','==','$clientid')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message','$clientid/$username/LANWORLD','$clientid','==')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id','$speed','$clientid','==')");
+    $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$username','User-Password','==','$password')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message','==','$clientid/$username','$clientid')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id','==','$speed','$clientid')");
     my $error_str="Added";
     return \$error_str;
 
@@ -155,12 +155,12 @@ sub addHPNAClient
             }
             else
             {
-                $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Password','$mac','==','$clientid')");
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','$clientid/$username/$main::region','$clientid','==')");
+                $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','User-Password','==','getinfo')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$clientid/$username/$main::region','$clientid')");
 
                 if (exists $hpnaClients{$_}{'Filter-Id'})
                 {
-                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','$hpnaClients{$_}{'Filter-Id'}','$clientid','==')");
+                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$hpnaClients{$_}{'Filter-Id'}','$clientid')");
                     return 1;
                 }
                 else
@@ -173,32 +173,6 @@ sub addHPNAClient
 }
 
 
-sub addHPNAClientLANWORLD
-{
-    my ($mac,$username,$password,$clientid,$speed)=@_;
-    $username=~s/\@wlanmail.com//;
-
-    if ($mac !~m#(..\:..\:..\:..\:..\:..)#)
-    {
-        my $error_str="Laitteisto-osoite ei kelpaa : $mac";
-        return \$error_str;
-    }
-    if (&checkRegister($mac))
-    {
-        my $error_str="Laitteisto-osoite on jo käytössä / MAC-Address is already registered";
-        return \$error_str;
-    }
-    else
-    {
-        if ($speed eq '')
-        {
-            $speed="1024/1024";
-        }
-        $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Password','$mac','==','$clientid')");
-        $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','$clientid/$username/$main::region','$clientid','==')");
-        $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','$speed','$clientid','==')");
-    }
-}
 
 
 sub saveHPNAClient
@@ -214,14 +188,14 @@ sub saveHPNAClient
 
     if ($replymessage =~m#^(\d+)\/.*#)
     {
-        $clientid=$1;;
+			    $clientid=$1;;
         if (&checkRegister($mac))
         {
             my $error_str="Laitteisto-osoite on jo käytössä / MAC-Address is already registered";
             $error_str=$main::dbh_hpna->do("UPDATE radreply set Value='$replymessage' where clientid='$clientid' and UserName='$mac' and Attribute='Reply-Message'");
             if ($error_str eq "0E0")
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','$replymessage','$clientid','==')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage','$clientid')");
             }
             elsif ($error_str eq 1)
             {
@@ -238,7 +212,7 @@ sub saveHPNAClient
                 $error_str=$main::dbh_hpna->do("UPDATE radreply SET Value='$filterid' where clientid='$clientid' and UserName='$mac' and Attribute='Filter-Id'");
                 if ($error_str eq "0E0")
                 {
-                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','$filterid','$clientid','==')");
+$main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid','$clientid')");
                     return 1;
                 }
                 elsif ($error_str eq 1)
@@ -262,11 +236,11 @@ sub saveHPNAClient
         else
         {
             
-            $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Password','$mac','==','$clientid')");
-            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','$replymessage','$clientid','==')");
+            $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','User-Password','==','getinfo')");
+            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage','$clientid')");
             if (defined $filterid)
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','$filterid','$clientid','==')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid','$clientid')");
                 my $error_str="OK $clientid";
                 return \$error_str;
                 return 1;
@@ -383,7 +357,7 @@ sub checkRegister
 {
     my $mac=shift;
     my $found=0;
-    my $sth = $main::dbh_hpna->prepare("SELECT Username,clientid,Attribute,Value FROM radcheck WHERE UserName = '$mac'  ORDER BY Attribute;");
+    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radcheck WHERE UserName = '$mac'  ORDER BY Attribute;");
     $sth->execute();
     my @row;
 
