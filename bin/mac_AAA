@@ -41,9 +41,10 @@ my $maxprocs = 10;
 my @deadpids=();
 my $working = {};
 my $QoStype="htb-ip";
-my $version="2.25";
+my $version="2.27";
 
-
+print "Enabling htb_rate_est\n";
+`echo 1 > /sys/module/sch_htb/parameters/htb_rate_est`;
 Authen::Radius->load_dictionary($dir."/etc/dictionary/dictionary");
 
 my $lock_file="/var/run/mac_AAA.pid";
@@ -1095,10 +1096,9 @@ print F
             {
                 if (! defined $status{$mac}{speed})
                 {
-                    printDebug(0,"CRIT","$mac ERROR speed is not defined 2clearing");
+                    printDebug(0,"CRIT","$mac ERROR speed is not defined clearing\n");
                     print "Check me $mac $status{$mac}{redirect} \n";
-                    createMACRemoveList($mac);
-                    removeQoSRules($mac);
+                    addToClearList($mac);
                     $info_str=$info_str.":::";
                 }
                 else
@@ -1167,6 +1167,13 @@ close(CBL);
     {
         my $cbl_time=time;
         my $cleared=0;
+        print ".$j.";
+ if ($j % 2 )
+        {
+            print "CLEAR LIST\n";
+            checkClearList($j);
+        }
+else {
         for (my $k=0;$k<6;$k++)
         {
             sleep(1);
@@ -1174,7 +1181,7 @@ close(CBL);
             my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$block) = stat($dir."/tmp/clearBL");
             if ($cbl_time ne $mtime)
             {
-                print "Checking clear blacklist\n ";
+                print "Checking clear blacklist\n";
                 open(CBL,$dir."/tmp/clearBL");
                 foreach (<CBL>)
                 {
@@ -1205,10 +1212,20 @@ close(CBL);
             $cbl_time=$mtime;
         }
 
-        print ".$j.";
+        }
+       
     }
     print "\n";
 
+}
+
+
+sub addToClearList{
+    my($mac)=@_;
+
+    open(CLEARLIST,">>/opt/perl-traffic-control/tmp/clearList");
+    print CLEARLIST "ERROR:CLEAR:".$mac.":END\n";
+    close(CLEARLIST);
 }
 
 
@@ -1243,7 +1260,7 @@ if (defined $r)
 
             $r->send_packet (1) and $type = $r->recv_packet;
 
-            print "Type : $type\n" ;
+           
 
             if ( (defined $type) && ( $type eq 2 ) ) {
                 
@@ -2176,8 +2193,8 @@ sub checkClearList
             my @temp=split(":",$_);
             my $mac="$temp[2]:$temp[3]:$temp[4]:$temp[5]:$temp[6]:$temp[7]";
             #$mac=lc($mac);
-            my $ref=createMACRemoveList($mac);
-            @removeList=@$ref;
+            my $ref=createMACRemoveList($mac);            
+            push(@removeList,$mac);
         }
         close(CLEARLIST);
         
