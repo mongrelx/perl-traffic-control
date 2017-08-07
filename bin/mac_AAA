@@ -1222,7 +1222,7 @@ sub AuthenticateMAC
         $pass=lc($user);
         $pass="getinfo"; 
         print "Authenticating Username $user, Password $pass\n";
- print "auth result=", $r->check_pwd('$user', '$pass'), "\n";       
+ print "auth result=", $r->check_pwd($user, $pass), "\n";       
 if (defined $r)
         {
             $r->add_attributes (
