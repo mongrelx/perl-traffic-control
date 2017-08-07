@@ -38,12 +38,12 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <ul>
 <li> apt-get install git
 <br>
-<li> apt-get install libdbi-perl librrdtool-oo-perl
+<li> apt-get install libdbi-perl librrdtool-oo-perl 
 <li> apt-get install libdbd-mysql libdbd-mysql-perl libmysqlclient18
-<li> apt-get install libconvert-ber-perl mysql-server freeradius-mysql
+<li> apt-get install libconvert-ber-perl mysql-server freeradius-mysql libauthen-radius-perl
 <li> apt-get install libcurses-perl libjson-perl libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
 <li> cpan -i Curses::Application
-<li> cpan -i RRD
+<!---<li> cpan -i RRD ???-->
 <li> cd /opt/
 <li> git clone https://github.com/mongrelx/perl-traffic-control.git
 </ul>
@@ -64,7 +64,7 @@ mysql>GRANT ALL PRIVILEGES   ON ptc_auth.* TO 'ptc_user'@'%'   IDENTIFIED BY 'pt
 <h3>Radius</h3>
 <ul>
         
-debian 8
+<h4>debian 8</h4>
 <li> edit sql.conf to match db_user,db_pass,db_name
 <li> include sql.conf from freeradius.conf
 <li> add to /etc/freeradius/users <br>
@@ -80,7 +80,7 @@ under Authorization section<br>
 
 <ul>
         
-debian 9
+<h4>debian 9</h4>
 <li> edit /etc/freeradius/mods-available/sql to match db_user,db_pass,db_name
 <li> enable mod sql
 <li> add to /etc/freeradius/3.0/users <br>
@@ -93,6 +93,13 @@ under Authorization section<br>
                 sql
         }
 </ul>
+
+edit /opt/perl-traffic-control/etc/AAA/home.AAA.conf to match your network
+
+
+/opt/perl-traffic-control/bin/iptable-basic  > /etc/iptables.up.rules 
+iptables-restore < /etc/iptables.up.rules
+
 
 
 <h2>Usage</h2>
