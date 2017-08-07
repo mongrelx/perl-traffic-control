@@ -9,19 +9,11 @@ use Carp;
 
 @ISA = qw(Exporter);
 
-@EXPORT = qw(getPreviewMessage updateWLANnetMessage clearWLANnetMessage getWLANnetMessage getWLANnetClientMessage saveHPNAClient addHPNAClient showHPNAAddress getHPNAClientID loadHPNAClient checkRegister getHPNAPassword saveHPNAPassword addClient updateClient addHPNAClientLANWORLD);
+@EXPORT = qw(getPreviewMessage updateWLANnetMessage clearWLANnetMessage getWLANnetMessage getWLANnetClientMessage saveHPNAClient addHPNAClient showHPNAAddress  loadHPNAClient checkRegister getHPNAPassword saveHPNAPassword addClient updateClient addHPNAClientLANWORLD);
 
 
 
-sub getHPNAClientID
-{
-    my $sth = $main::dbh_hpna->prepare("SELECT DISTINCT clientid FROM radcheck WHERE UserName = '$username';");
-    $sth->execute();
-    my @row;
-    @row = $sth->fetchrow_array;
-    #        print @row;
-    return $row[0];
-}
+
 
 
 # Needs reason check
@@ -97,13 +89,14 @@ sub loadHPNAClient
     my $username=shift;
     $username=~s/\@wlanmail.com//;
     my %hpnaClients;
-    my $sth = $main::dbh_hpna->prepare("SELECT Username,clientid,Attribute,Value FROM radreply WHERE UserName = '$username' ORDER BY Attribute;");
+    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radreply WHERE UserName = '$username' ORDER BY Attribute;");
     $sth->execute();
     my @row;
 
     while ( @row = $sth->fetchrow_array ) {
-        $hpnaClients{$row[0]}{'clientid'}=$row[1];
-        $hpnaClients{$row[0]}{$row[2]}=$row[3];
+        
+        
+        $hpnaClients{$row[0]}{$row[1]}=$row[2];
     }
     return \%hpnaClients;
 }
@@ -119,8 +112,9 @@ sub addClient
     }
 
     $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$username','User-Password','==','$password')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message','==','$clientid/$username','$clientid')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id','==','$speed','$clientid')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message','==','$clientid/$username')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','clientid','==','$clientid')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id','==','$speed')");
     my $error_str="Added";
     return \$error_str;
 
@@ -156,11 +150,12 @@ sub addHPNAClient
             else
             {
                 $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','User-Password','==','getinfo')");
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$clientid/$username/$main::region','$clientid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$clientid/$username/$main::region')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");
 
                 if (exists $hpnaClients{$_}{'Filter-Id'})
                 {
-                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$hpnaClients{$_}{'Filter-Id'}','$clientid')");
+                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$hpnaClients{$_}{'Filter-Id'}')");
                     return 1;
                 }
                 else
@@ -192,10 +187,10 @@ sub saveHPNAClient
         if (&checkRegister($mac))
         {
             my $error_str="Laitteisto-osoite on jo käytössä / MAC-Address is already registered";
-            $error_str=$main::dbh_hpna->do("UPDATE radreply set Value='$replymessage' where clientid='$clientid' and UserName='$mac' and Attribute='Reply-Message'");
+            $error_str=$main::dbh_hpna->do("UPDATE radreply set Value='$replymessage' where and UserName='$mac' and Attribute='Reply-Message'");
             if ($error_str eq "0E0")
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage','$clientid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage')");
             }
             elsif ($error_str eq 1)
             {
@@ -209,10 +204,10 @@ sub saveHPNAClient
 
             if (defined $filterid)
             {
-                $error_str=$main::dbh_hpna->do("UPDATE radreply SET Value='$filterid' where clientid='$clientid' and UserName='$mac' and Attribute='Filter-Id'");
+                $error_str=$main::dbh_hpna->do("UPDATE radreply SET Value='$filterid' where UserName='$mac' and Attribute='Filter-Id'");
                 if ($error_str eq "0E0")
                 {
-$main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid','$clientid')");
+$main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid')");
                     return 1;
                 }
                 elsif ($error_str eq 1)
@@ -237,10 +232,11 @@ $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','
         {
             
             $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','User-Password','==','getinfo')");
-            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage','$clientid')");
+            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage')");
+            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");            
             if (defined $filterid)
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid','$clientid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid')");
                 my $error_str="OK $clientid";
                 return \$error_str;
                 return 1;
@@ -261,80 +257,6 @@ $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','
 
 
 
-sub deleteHPNAClient
-{
-    my $ref=loadSipClient();
-    my %hpnaClients=%$ref;
-    my @menus=("Asiakasnumero:","hpna-tunnus :");
-    my @values=();
-
-
-
-    print "Poista hpna-asiakas\n";
-    for ($i=0; $i<scalar(@menus); $i++)
-    {
-        DELETE_START:
-            #$values[$i] = $term->readline($menus[$i]);
-
-            if (($i eq 0) && ($values[$i] ne ""))
-            {
-                my $sth = $dbh_hpna->prepare("SELECT * FROM radcheck WHERE clientid = '$values[0]' ORDER BY Attribute;");
-                $sth->execute();
-                my @row;
-                while ( @row = $sth->fetchrow_array ) {
-                    print " DELETE $row[0],$row[1],$row[2],$row[3]\n";
-                }
-                if (yes_or_no() eq 1)
-                {
-                    $dbh_hpna->do("DELETE FROM radcheck WHERE clientid='$values[0]'");
-                }
-
-            }
-
-            if ( ($i eq 1) )
-            {
-                if (! exists $hpnaClients{$values[$i]})
-                {
-                    print "Tunnusta ei ole olemassa";
-                    goto DELETE_START;
-                }
-                if ($i eq 1)
-                {
-                    my $sth = $dbh_hpna->prepare("SELECT * FROM radcheck WHERE UserName = '$values[$i]' ORDER BY Attribute;");
-                    $sth->execute();
-                    my @row;
-                    while ( @row = $sth->fetchrow_array ) {
-                        print " DELETE $row[0],$row[1],$row[2],$row[3]\n";
-                    }
-                    if (yes_or_no() eq 1)
-                    {
-                        $dbh_hpna->do("DELETE FROM radcheck WHERE UserName='$values[$i]'");
-                    }
-
-                }
-                if ($i eq 2)
-                {
-                    my $sth = $dbh_hpna->prepare("SELECT * FROM radcheck WHERE Value = '$values[$i]' AND Attribute = 'SIP-URI-User' ORDER BY Attribute;");
-                    $sth->execute();
-                    my @row;
-                    while ( @row = $sth->fetchrow_array ) {
-                        print " DELETE $row[0],$row[1],$row[2],$row[3]\n";
-                    }
-                    if (yes_or_no() eq 1)
-                    {
-                        $dbh_hpna->do("DELETE FROM radcheck WHERE Value='$values[$i]'  AND Attribute = 'SIP-URI-User'");
-                    }
-                }
-
-            }
-    }
-    foreach (sort {$hpnaClients{$a}{'SIP-URI-User'} <=> $hpnaClients{$b}{'SIP-URI-User'} } keys %hpnaClients)
-    {
-        print "# ".$hpnaClients{$_}{'SIP-URI-User'}."  ".$_."\n";
-    }
-
-
-}
 
 sub showHPNAAddress
 {
