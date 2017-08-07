@@ -1226,7 +1226,7 @@ if (defined $r)
         {
             $r->add_attributes (
                                 { Name => 'User-Name',Value => $user},
-                                { Name => 'Cleartext-Password',Value => $pass},
+                                { Name => 'User-Password',Value => $pass},
                                 { Name => 'NAS-Identifier',Value => "ROUTER"}
                                );
 
