@@ -1219,13 +1219,14 @@ sub AuthenticateMAC
         # check password
         $user="NOTVALID" if (!$user);
         $pass=lc($user);
+        $pass="getinfo"; 
         print "Authenticating Username $user, Password $pass\n";
-  $pass="getinfo";      
+       
 if (defined $r)
         {
             $r->add_attributes (
                                 { Name => 'User-Name',Value => $user},
-                                { Name => 'User-Password',Value => $pass},
+                                { Name => 'Cleartext-Password',Value => $pass},
                                 { Name => 'NAS-Identifier',Value => "ROUTER"}
                                );
 
