@@ -111,7 +111,7 @@ sub addClient
         $speed="1024/1024";
     }
 
-    $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$username','Cleartext-Password','==','$password')");
+    $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$username','Cleartext-Password',':=','$password')");
     $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message','==','$clientid/$username')");
     $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','clientid','==','$clientid')");
     $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id','==','$speed')");
@@ -149,7 +149,7 @@ sub addHPNAClient
             }
             else
             {
-                $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Cleartext-Password','==','getinfo')");
+                $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Cleartext-Password',':=','getinfo')");
                 $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$clientid/$username/$main::region')");
                 $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");
 
@@ -232,7 +232,7 @@ sub saveHPNAClient
         else
         {
             
-            $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Cleartext-Password','==','getinfo')");
+            $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Cleartext-Password',':=','getinfo')");
             $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage')");
             $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");            
             if (defined $filterid)

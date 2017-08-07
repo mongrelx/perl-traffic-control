@@ -43,6 +43,7 @@ my $working = {};
 my $QoStype="htb-ip";
 my $version="2.25";
 
+
 Authen::Radius->load_dictionary($dir."/etc/dictionary/dictionary");
 
 my $lock_file="/var/run/mac_AAA.pid";
@@ -1221,12 +1222,12 @@ sub AuthenticateMAC
         $pass=lc($user);
         $pass="getinfo"; 
         print "Authenticating Username $user, Password $pass\n";
-       
+ print "auth result=", $r->check_pwd('$user', '$pass'), "\n";       
 if (defined $r)
         {
             $r->add_attributes (
                                 { Name => 'User-Name',Value => $user},
-                                { Name => 'Password',Value => $pass},
+                                { Name => 'Cleartext-Password',Value => $pass},
                                 { Name => 'NAS-Identifier',Value => "ROUTER"}
                                );
 
