@@ -183,7 +183,7 @@ sub saveHPNAClient
 
     if ($replymessage =~m#^(\d+)\/.*#)
     {
-			    $clientid=$1;;
+        $clientid=$1;;
         if (&checkRegister($mac))
         {
             my $error_str="Laitteisto-osoite on jo käytössä / MAC-Address is already registered";
@@ -191,6 +191,7 @@ sub saveHPNAClient
             if ($error_str eq "0E0")
             {
                 $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");
             }
             elsif ($error_str eq 1)
             {
@@ -207,7 +208,7 @@ sub saveHPNAClient
                 $error_str=$main::dbh_hpna->do("UPDATE radreply SET Value='$filterid' where UserName='$mac' and Attribute='Filter-Id'");
                 if ($error_str eq "0E0")
                 {
-$main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid')");
+                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid')");
                     return 1;
                 }
                 elsif ($error_str eq 1)
@@ -279,7 +280,7 @@ sub checkRegister
 {
     my $mac=shift;
     my $found=0;
-    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radcheck WHERE UserName = '$mac'  ORDER BY Attribute;");
+    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radcheck WHERE UserName = '$mac' and Attribute='clientid'  ORDER BY Attribute;");
     $sth->execute();
     my @row;
 
