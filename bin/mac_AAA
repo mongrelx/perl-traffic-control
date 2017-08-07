@@ -784,7 +784,15 @@ while ()
                     }
                     else
                     {
-                        print F "START:$status{$mac}{ip}:$mac:$status{$mac}{redirect}:$status{$mac}{customer}:$status{$mac}{speed}:$status{$mac}{in_class}:$status{$mac}{out_class}:$status{$mac}{port}:$age\n";
+                        print F "START:$status{$mac}{ip}:";
+			print F "$mac:$status{$mac}{redirect}:";
+			
+print F 
+"$status{$mac}{customer}:";
+			print F "$status{$mac}{speed}:"
+			;print F "$status{$mac}{in_class}:"
+			;print F "$status{$mac}{out_class}:"
+			;print F "$status{$mac}{port}:$age\n";
                     }
                     AccountMAC("start",$mac,$status{$mac}{host},$status{$mac}{id},$status{$mac}{id});
                 }
@@ -1222,7 +1230,7 @@ sub AuthenticateMAC
         $pass=lc($user);
         $pass="getinfo"; 
         print "Authenticating Username $user, Password $pass\n";
- print "auth result=", $r->check_pwd($user, $pass), "\n";       
+ #print "auth result=", $r->check_pwd($user, $pass), "\n";       
 if (defined $r)
         {
             $r->add_attributes (
@@ -1235,7 +1243,7 @@ if (defined $r)
 
             $r->send_packet (1) and $type = $r->recv_packet;
 
-            print "Type : $type\n" if ($debug > 2);
+            print "Type : $type\n" ;
 
             if ( (defined $type) && ( $type eq 2 ) ) {
                 

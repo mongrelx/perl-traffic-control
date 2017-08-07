@@ -112,9 +112,9 @@ sub addClient
     }
 
     $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$username','Cleartext-Password',':=','$password')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message','==','$clientid/$username')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','clientid','==','$clientid')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id','==','$speed')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message',':=','$clientid/$username')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','clientid',':=','$clientid')");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id',':=','$speed')");
     my $error_str="Added";
     return \$error_str;
 
@@ -150,12 +150,12 @@ sub addHPNAClient
             else
             {
                 $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Cleartext-Password',':=','getinfo')");
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$clientid/$username/$main::region')");
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message',':=','$clientid/$username/$main::region')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid',':=','$clientid')");
 
                 if (exists $hpnaClients{$_}{'Filter-Id'})
                 {
-                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$hpnaClients{$_}{'Filter-Id'}')");
+                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id',':=','$hpnaClients{$_}{'Filter-Id'}')");
                     return 1;
                 }
                 else
@@ -190,8 +190,8 @@ sub saveHPNAClient
             $error_str=$main::dbh_hpna->do("UPDATE radreply set Value='$replymessage' where  UserName='$mac' and Attribute='Reply-Message'");
             if ($error_str eq "0E0")
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage')");
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message',':=','$replymessage')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid',':=','$clientid')");
             }
             elsif ($error_str eq 1)
             {
@@ -208,7 +208,7 @@ sub saveHPNAClient
                 $error_str=$main::dbh_hpna->do("UPDATE radreply SET Value='$filterid' where UserName='$mac' and Attribute='Filter-Id'");
                 if ($error_str eq "0E0")
                 {
-                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid')");
+                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id',':=','$filterid')");
                     return 1;
                 }
                 elsif ($error_str eq 1)
@@ -233,11 +233,11 @@ sub saveHPNAClient
         {
             
             $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Cleartext-Password',':=','getinfo')");
-            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage')");
-            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid','==','$clientid')");            
+            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message',':=','$replymessage')");
+            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid',':=','$clientid')");            
             if (defined $filterid)
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id','==','$filterid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id',':=','$filterid')");
                 my $error_str="OK $clientid";
                 return \$error_str;
                 return 1;
