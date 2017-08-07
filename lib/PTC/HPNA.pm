@@ -187,7 +187,7 @@ sub saveHPNAClient
         if (&checkRegister($mac))
         {
             my $error_str="Laitteisto-osoite on jo käytössä / MAC-Address is already registered";
-            $error_str=$main::dbh_hpna->do("UPDATE radreply set Value='$replymessage' where and UserName='$mac' and Attribute='Reply-Message'");
+            $error_str=$main::dbh_hpna->do("UPDATE radreply set Value='$replymessage' where  UserName='$mac' and Attribute='Reply-Message'");
             if ($error_str eq "0E0")
             {
                 $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','==','$replymessage')");
