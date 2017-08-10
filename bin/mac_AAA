@@ -42,9 +42,13 @@ my @deadpids=();
 my $working = {};
 my $QoStype="htb-ip";
 my $version="2.27";
+my $nat=1;
+my $nat_device="ifb0";
 
-print "Enabling htb_rate_est\n";
-`echo 1 > /sys/module/sch_htb/parameters/htb_rate_est`;
+
+
+
+
 Authen::Radius->load_dictionary($dir."/etc/dictionary/dictionary");
 
 my $lock_file="/var/run/mac_AAA.pid";
@@ -58,6 +62,8 @@ my $debug = $options{d} || 0;
 
 $main::debug = $debug;
 PTC::Utils::loadConfig($cfg_file,0,1);
+print "Enabling htb_rate_est\n" if ($debug > 3);
+`echo 1 > /sys/module/sch_htb/parameters/htb_rate_est`;
 my $check_time;
 if (defined $cfg_file)
 {
@@ -69,7 +75,7 @@ my $radius_host="127.0.0.1";
 if (defined  $Options::radius_host)
 {
     $radius_host=$Options::radius_host;
-    print "Using radius host $radius_host\n";
+    print "Using radius host $radius_host\n" if ($debug > 3);
 }
 
 if (!defined  $Options::max_load)
@@ -85,19 +91,19 @@ if (!defined  $Options::max_load)
     }
     $Options::max_load=2*$cpus-(0.1*$cpus);
 }
-print "MAX LOAD ".$Options::max_load."\n";
+print "MAX LOAD ".$Options::max_load."\n" if ($debug > 3);
 
 if (!defined  $Options::warn_load)
 {
     $Options::warn_load=($Options::max_load/2); #/
 }
-print "WARN LOAD ".$Options::warn_load."\n";
+print "WARN LOAD ".$Options::warn_load."\n" if ($debug > 3);
 
 if (!defined $Options::recheck_time)
 {
     $Options::recheck_time = 3600;
 }
-print "RECHECK TIME ".$Options::recheck_time."\n";
+print "RECHECK TIME ".$Options::recheck_time."\n" if ($debug > 3);
 
 if ($Options::debug)
 {
@@ -121,33 +127,7 @@ printDebug(0,"INFO","creating lockfile $lock_file");
 open(LOCK,">$lock_file");
 print LOCK $$;
 
-sub newproc {
-    my ($work) = @_;
 
-    if ($procs >= $maxprocs) {
-        sleep(10);
-    }
-
-    if ($procs >= ($maxprocs + 50)) {
-        # the throttling attempts obviously haven't worked - bail out!
-        printDebug(0,"CRIT","Killing myself:  too many processes");
-        kill(9, 0);
-    }
-
-    my $pid = fork();
-    if ($pid == 0) {
-        `$work`;
-        exit 0;
-
-    } elsif ($pid > 0) {
-        $working->{$pid} = 1;
-        $procs++;
-
-    } else 
-    {
-        die "Can't fork() for $!";
-    }
-}
 
 my %Option;
 my %mac_to_ip=();
@@ -183,7 +163,11 @@ $SIG{TERM} = \&SendAcctEnd;
 
 
 my %QoSDevice;
-
+if ($nat)
+{
+    `modprobe ifb`;
+    `ip link set dev ifb0 down`;
+}
 print "FLUSHING FIREWALL ";
 `iptables -F REDIRECT_LIST -t nat`;
 `iptables -F REDIRECT_LIST `;
@@ -192,6 +176,12 @@ print "FLUSHING FIREWALL ";
 `iptables -F INPUT_LIST`;
 `iptables -F INPUT_UNWANTED`;
 `iptables -F FORWARD_UNWANTED`;
+if ($nat)
+{
+`iptables -F OUTPUT -t mangle`;
+`iptables -F FORWARD -t mangle`;
+`iptables -F QOS -t mangle`;
+}
 print "DONE \n";
 
 foreach my $network (keys %Options::network)
@@ -228,11 +218,16 @@ foreach my $network (keys %Options::network)
                 `iptables -A FORWARD_UNWANTED -o $device -d 172.16.0.0/12 -j DROP`;
                 `iptables -A FORWARD_UNWANTED -o $device -d 10.0.0.0/12 -j DROP`;
                 `iptables -A FORWARD_UNWANTED -o $device -d 127.0.0.0/8 -j DROP`;
+                if ($nat)
+                {
+                    `iptables -t mangle -A FORWARD -o $device -j QOS`;
+                    `iptables -t mangle -A OUTPUT -o $device -j QOS`;
+                }
             }
         }
 
     }
-    else
+    else #SINGLE OUT DEVICE
     {
         $QoSDevice{$Options::out_device{$network}}{count}++;
         if ($QoSDevice{$Options::out_device{$network}}{count} <= 1)
@@ -242,11 +237,18 @@ foreach my $network (keys %Options::network)
             `iptables -A FORWARD_UNWANTED -o $Options::out_device{$network} -d 172.16.0.0/12 -j DROP`;
             `iptables -A FORWARD_UNWANTED -o $Options::out_device{$network} -d 10.0.0.0/12 -j DROP`;
             `iptables -A FORWARD_UNWANTED -o $Options::out_device{$network} -d 127.0.0.0/8 -j DROP`;
+             if ($nat)
+             {
+                    `iptables -t mangle -A FORWARD -o $Options::out_device{$network} -j QOS`;
+                    `iptables -t mangle -A OUTPUT -o $Options::out_device{$network} -j QOS`;
+                    $QoSDevice{$Options::out_device{$network}}{nat_device}=1;
+                    
+             }
         }
     }
 }
 
-
+print "Initializing QoS Devices\n";
 my $i=0;
 
 foreach (keys %QoSDevice)
@@ -258,11 +260,15 @@ foreach (keys %QoSDevice)
     }
     else
     {
-        InitQoSDevice($dev,$i);
+        
+        InitQoSDevice($dev,$i,$QoSDevice{$dev}{nat_device});
     }
 }
 
-
+if ($nat)
+{
+    `ip link set dev ifb0 up`;
+}
 initHandles();
 
 print "Creating IP-BASED Rules\n" if ($debug>2);;
@@ -404,11 +410,17 @@ foreach my $network (keys %Options::network)
                 {
                     TC("class add dev $in_device  parent 1:1 classid 1:$out_class htb rate 128kbit ceil ".$dspeed."kbit");
                     TC("qdisc add dev $in_device parent 1:$out_class handle $out_class: sfq perturb 10");
+                    if ($nat)
+                    {
+                        push(@out_devices,"ifb0");
+                    }
                     foreach my $out_device (@out_devices)
                     {
                         TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
                         TC("qdisc add dev $out_device parent 1:$in_class handle $in_class: sfq perturb 10");
+                        
                     }
+                    
                     if ($QoStype eq "htb-ip")
                     {
                         my $handle=pop(@handles);
@@ -599,7 +611,7 @@ while ()
     `$cmd`;
     
     
-    print "FOUND ".scalar(keys %status)." TO AUTH\n";
+    print "FOUND ".scalar(keys %status)." TO AUTH\n" if ($debug > 1);
     open (F,">".$dir."/tmp/currently_online.tmp");
     print F "PROGRAM:$version:".scalar(keys %status)."\n";
     checkClearList($run_times);
@@ -756,7 +768,7 @@ while ()
                     }
 
 
-                    CreateIPTablesTable($mac,$status{$mac}{id},$status{$mac}{ip},$status{$mac}{network});
+                    CreateIPTablesTable($mac,$status{$mac}{id},$status{$mac}{ip},$status{$mac}{network},$status{$mac}{customer});
 
                     $status{$mac}{speed}="$Options::in_speed{$status{$mac}{network}}/$Options::out_speed{$status{$mac}{network}}" if (!exists $status{$mac}{speed});
                     $createdRules++;
@@ -1163,7 +1175,7 @@ print F
 close(CBL);
 } 
     
-    for (my $j=0;$j<10;$j++)
+    for (my $j=0;$j<4;$j++)
     {
         my $cbl_time=time;
         my $cleared=0;
@@ -1503,41 +1515,25 @@ sub CreateQoSRules
     {
         print "Creating NEW $QoStype $in_class / $out_class  QoS/Bandwidth rules for $mac with speed $dspeed / $uspeed\n" ;
         print "IN $in_device OUT @out_devices\n" if ($debug > 1);
-        if ($QoStype =~ /^htb-tbf/)
+        if ($QoStype =~ /^htb-/)
         {
-            print "Creating TBF in rules\n" if ($debug > 0);
             TC("class add dev $in_device  parent 1:1 classid 1:$out_class htb rate 128kbit ceil ".$dspeed."kbit");
-            TC("qdisc add dev $in_device parent 1:$out_class tbf rate ".$dspeed."kbit burst 10kb limit 25Kb mpu 1024");
-            print "Creating out rules\n" if ($debug > 0);
-            foreach my $out_device (@out_devices)
+            TC("qdisc add dev $in_device parent 1:$out_class handle $out_class: sfq perturb 10"); 
+            if ($nat)
             {
-                TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
-                TC("qdisc add dev $out_device parent 1:$in_class tbf rate ".$uspeed."kbit burst 10kb limit 25Kb mpu 1024");
-            }            
-        }
-        elsif ($QoStype =~ /^htb-/)
-        {
-            TC("class add dev $in_device  parent 1:1 classid 1:$out_class htb rate 128kbit ceil ".$dspeed."kbit");
-            TC("qdisc add dev $in_device parent 1:$out_class handle $out_class: sfq perturb 10");
+                TC("class add dev $nat_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
+                TC("qdisc add dev $nat_device parent 1:$in_class handle $in_class: sfq perturb 10");
+            }
+            else 
+            {
             foreach my $out_device (@out_devices)
             {
                 TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
                 TC("qdisc add dev $out_device parent 1:$in_class handle $in_class: sfq perturb 10");
-            }
+            }}
         }
         
-        else
-        {
-            print "Creating in rules\n" if ($debug > 2);
-            TC("class add dev $in_device  parent ".$QoSDevice{$in_device}{handle}.": classid ".$QoSDevice{$in_device}{handle}.":$out_class cbq rate ".$dspeed."kbit avpkt 1000 allot 1500 weight ".int($dspeed/10)."kbit prio 5 bounded");
-            TC("qdisc add dev $in_device parent ".$QoSDevice{$in_device}{handle}.":$out_class tbf rate ".$dspeed."kbit burst 20kb limit 25Kb");
-            print "Creating out rules\n" if ($debug > 2);
-            foreach my $out_device (@out_devices)
-            {
-                TC("class add dev $out_device  parent ".$QoSDevice{$out_device}{handle}.": classid ".$QoSDevice{$out_device}{handle}.":$in_class cbq rate ".$uspeed."kbit avpkt 1000 allot 1500 weight ".int($uspeed/10)."kbit prio 5 bounded");
-                TC("qdisc add dev $out_device parent ".$QoSDevice{$out_device}{handle}.":$in_class tbf rate ".$uspeed."kbit burst 20kb limit 25Kb");
-            }
-        }
+        
 
     }
     else
@@ -1561,11 +1557,25 @@ sub CreateQoSRules
         my $handle=pop(@handles);
         if ((defined $handle) && ($handle ne ''))
         {
-            $status{$mac}{'handle'}=$handle;
+           
             print "In - Filter $handle\n" if ($debug > 2);
-            foreach my $out_device (@out_devices)
+            $status{$mac}{'handle'}=$handle;
+            if ($nat)
+            {
+                $status{$mac}{'clientid'}=$clientid;
+                my ($clientid,$username,$region) = split('/',$customer);
+                if (defined $clientid && $clientid > 0)
+                {
+                    TC(" filter add dev ifb0 parent 1: protocol ip pref $clientid handle $clientid fw flowid 1:$in_class");
+                }
+            }
+            else
+            {
+            
+              foreach my $out_device (@out_devices)
             {
                 TC("filter add dev $out_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip src ".$status{$mac}{ip}." flowid 1:".$in_class);
+            }
             }
             print "Out - Filter $handle\n" if ($debug > 2);
             TC("filter add dev $in_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip dst ".$status{$mac}{ip}." flowid 1:".$out_class);
@@ -1644,11 +1654,19 @@ sub removeQoSRules
                 unshift (@handles,$status{$mac}{'handle'});
                 TC("filter del dev $in_device parent 1: protocol ip prio 16 handle 800::$handle u32",1);
                 sleep(1) if ($action ne "fast");
+                if ($nat)
+                {
+
+                     TC("filter del dev $nat_device parent 1: protocol ip pref $status{$mac}{'clientid'} fw",1);
+                }
+                else
+                {
                 foreach my $out_device (@out_devices)
                 {
                     TC("filter del dev $out_device parent 1: protocol ip prio 16 handle 800::$handle u32",1);
                 }
                 sleep(1) if ($action ne "fast");
+                }
             }
             else
             {
@@ -1672,12 +1690,18 @@ sub removeQoSRules
             if (defined $in_class)
             {
                 print "Deleting in_class $in_class\n";
+                if ($nat)
+                {
+                    TC("class del dev $nat_device parent 1:1 classid 1:$in_class ");
+                }
+                else {
                 foreach my $out_device (@out_devices)
                 {
                     TC("class del dev $out_device parent 1:1 classid 1:$in_class ");
                 }
                 unshift(@freeclasses,$in_class);
                 sleep(1) if ($action ne "fast");
+                }
             }
             else
             {
@@ -1725,9 +1749,11 @@ sub removeQoSRules
 
 sub InitQoSDevice
 {
-    my ($device,$handle)=@_;
+    my ($device,$handle,$nat_enabled)=@_;
 
     TC(" qdisc del dev $device root",0);
+    
+    
     if ($QoStype =~ /htb-/)
     {
         TC(" qdisc add dev $device root handle 1: htb default 4096");
@@ -1740,6 +1766,20 @@ sub InitQoSDevice
         TC(" qdisc add dev $device root handle $handle: cbq bandwidth 100Mbit avpkt 1000");
         TC(" class add dev $device parent $handle:0 classid :1 cbq bandwidth 100Mbit avpkt 1000 allot 1514 rate 100Mbit maxburst 500");
     }
+    if (defined $nat_enabled && $nat_enabled ==1) 
+    {
+        TC(" qdisc del dev $device ingress",0);
+    
+        TC(" qdisc add dev $device ingress handle ffff:");
+        TC(" filter add dev $device parent ffff: protocol ip u32 match u32 0 0 action connmark action mirred egress redirect dev ifb0 flowid ffff:1");
+        TC(" qdisc del dev $nat_device root",0);
+        TC(" qdisc add dev $nat_device root handle 1: htb default 4096");
+        TC(" class add dev $nat_device parent 1: classid 1:1 htb rate 100Mbps ceil 1000Mbps");
+        TC(" class add dev $nat_device parent 1:1 classid 1:4096 htb rate 100Mbps  ceil 1000Mbps");
+        TC(" qdisc add dev $nat_device parent 1:4096 handle 4096: sfq perturb 10");
+    }
+
+    
 
 }
 
@@ -1838,27 +1878,31 @@ sub AccountMAC
 
 sub CreateIPTablesTable
 {
-    my ($mac,$id,$ip,$network) = @_;
+    my ($mac,$id,$ip,$network,$customer) = @_;
     if (($mac ne '') && ($id ne '') && ($ip ne ''))
     {
-        print "Creating table $mac-$id\n" ;#if ($debug > 2);
-        #`iptables -N $mac-$id`;
-        #        `iptables -A $mac-$id -s $ip`;
-        #        `iptables -A $mac-$id -d $ip`;
-        #`iptables -A $mac-$id -j ACCEPT`;
+        print "Creating table $mac-$id\n" if ($debug > 2);       
         if (
             (defined $status{$mac}{firewall})
             &&
             ($status{$mac}{firewall} eq "STATEFULL")
            )
         {
-            #`iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
-            #`iptables -A MAC-COUNTER-$network -j ACCEPT -m state --state ESTABLISHED,RELATED -d $ip ! -m mac  --mac-source  $mac `;
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
+            `iptables -A MAC-COUNTER-$network -j ACCEPT -m state --state ESTABLISHED,RELATED -d $ip ! -m mac  --mac-source  $mac `;
         }
         else
         {
             `iptables -A MAC-COUNTER-$network -j ACCEPT -s $ip -m mac --mac-source $mac `;
             `iptables -A MAC-COUNTER-$network -j ACCEPT -d $ip  -m mac ! --mac-source $mac `;
+            if ($nat)
+            {
+                 my ($clientid,$username,$region) = split('/',$customer);
+                 if (defined $clientid)
+                 {
+                    `iptables -t mangle -A QOS -j MARK -s $ip  -m mark --mark 0 --set-mark $clientid `;
+                 }
+            }
         }
     }
 }
@@ -2180,9 +2224,12 @@ sub checkClearList
 {
     my $runs=shift;
     my $single_mac=shift;
-    if ($runs < 1)
+    if ($runs < 1) 
     {
-        `rm $clearList`;
+        if (-e $clearList)
+        {
+            `rm $clearList`;
+        }
     }
     my @removeList=();
     if (-e $clearList)
@@ -2365,6 +2412,34 @@ sub saveEthernetDesc
     close(F);
     }
 
+}
+
+sub newproc {
+    my ($work) = @_;
+
+    if ($procs >= $maxprocs) {
+        sleep(10);
+    }
+
+    if ($procs >= ($maxprocs + 50)) {
+        # the throttling attempts obviously haven't worked - bail out!
+        printDebug(0,"CRIT","Killing myself:  too many processes");
+        kill(9, 0);
+    }
+
+    my $pid = fork();
+    if ($pid == 0) {
+        `$work`;
+        exit 0;
+
+    } elsif ($pid > 0) {
+        $working->{$pid} = 1;
+        $procs++;
+
+    } else 
+    {
+        die "Can't fork() for $!";
+    }
 }
 
 sub REAPER {

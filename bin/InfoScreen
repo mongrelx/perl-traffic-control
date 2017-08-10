@@ -10,7 +10,7 @@ push(@INC,'/opt/perl-traffic-control/lib/');
 use lib qw(/opt/perl-traffic-control/lib);
 use DBI;
 use PTC::Authen;
-use PTC::HPNA;
+use PTC::Device;
 use PTC::Utils;
 use PTC::NetUtils;
 use PTC::Info;
@@ -832,7 +832,7 @@ sub editExit {
 
                         {
                             glob $main::dbh_hpna = DBI->connect("DBI:mysql:$Options::dbh_dbase:$Options::dbh_host", $Options::dbh_user, $Options::dbh_pass);
-                            my $msg=saveHPNAClient($rec{MAC},$rec{FilterId},$rec{RadReply});
+                            my $msg=saveClientDevice($rec{MAC},$rec{FilterId},$rec{RadReply});
                             if ($msg eq 1)
                             {
                                 #dialog('Saved', BTN_OK, 'Saved new information!',
