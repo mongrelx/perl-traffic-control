@@ -166,7 +166,7 @@ my %QoSDevice;
 if ($nat)
 {
     `modprobe ifb`;
-    `ip link set dev ifb0 down`;
+    `ip link set dev $nat_device down`;
 }
 print "FLUSHING FIREWALL ";
 `iptables -F REDIRECT_LIST -t nat`;
@@ -267,7 +267,7 @@ foreach (keys %QoSDevice)
 
 if ($nat)
 {
-    `ip link set dev ifb0 up`;
+    `ip link set dev $nat_device up`;
 }
 initHandles();
 
@@ -412,14 +412,17 @@ foreach my $network (keys %Options::network)
                     TC("qdisc add dev $in_device parent 1:$out_class handle $out_class: sfq perturb 10");
                     if ($nat)
                     {
-                        push(@out_devices,"ifb0");
+                        TC("class add dev $nat_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
+                        TC("qdisc add dev $nat_device parent 1:$in_class handle $in_class: sfq perturb 10");
+                       
                     }
-                    foreach my $out_device (@out_devices)
+                    else
+                    {foreach my $out_device (@out_devices)
                     {
                         TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
                         TC("qdisc add dev $out_device parent 1:$in_class handle $in_class: sfq perturb 10");
                         
-                    }
+                    }}
                     
                     if ($QoStype eq "htb-ip")
                     {
@@ -1531,9 +1534,7 @@ sub CreateQoSRules
                 TC("class add dev $out_device parent 1:1 classid 1:$in_class htb rate 128kbit ceil ".$uspeed."kbit");
                 TC("qdisc add dev $out_device parent 1:$in_class handle $in_class: sfq perturb 10");
             }}
-        }
-        
-        
+        }               
 
     }
     else
@@ -1541,18 +1542,7 @@ sub CreateQoSRules
         print STDERR "Creating new filters for REUSE class $in_class / $out_class\n";
     }
     print STDERR "Creating new filters for class $in_class / $out_class $mac \n" if ($debug > 2);
-    if ($QoStype eq "htb-mac")
-    {
-        my $tmp_mac=$mac;
-        $tmp_mac=~m#(..):(..):(..):(..):(..):(..)#;
-        foreach my $out_device (@out_devices)
-        {
-            TC("filter add dev $out_device parent 1: prio $in_class protocol ip u32 match ip src $status{$mac}{ip} flowid ".$QoSDevice{$out_device}{handle}.":$in_class");
-            TC("filter add dev $in_device parent 1:  prio $out_class protocol ip u32 match u16 0x0800 0xFFFF at -2 match u32 0x$3$4$5$6 0xFFFFFFFF at -12 match u16 0x$1$2 0xFFFF at -14  flowid ".$QoSDevice{$in_device}{handle}.":$out_class");
-        }
-
-    }
-    elsif (($QoStype eq "htb-ip") || ($QoStype eq "htb-tbf"))
+    if (($QoStype eq "htb-ip") || ($QoStype eq "htb-tbf"))
     {
         my $handle=pop(@handles);
         if ((defined $handle) && ($handle ne ''))
@@ -1566,8 +1556,10 @@ sub CreateQoSRules
                 my ($clientid,$username,$region) = split('/',$customer);
                 if (defined $clientid && $clientid > 0)
                 {
-                    TC(" filter add dev ifb0 parent 1: protocol ip pref $clientid handle $clientid fw flowid 1:$in_class");
-                }
+                if ($reuse eq 0)
+                 {
+                        TC(" filter add dev $nat_device parent 1: protocol ip pref $clientid handle $clientid fw flowid 1:$in_class");
+                }}
             }
             else
             {
@@ -1578,6 +1570,7 @@ sub CreateQoSRules
             }
             }
             print "Out - Filter $handle\n" if ($debug > 2);
+
             TC("filter add dev $in_device parent 1: handle ::$handle protocol ip prio 16 u32 match ip dst ".$status{$mac}{ip}." flowid 1:".$out_class);
         }
         else
@@ -1771,7 +1764,7 @@ sub InitQoSDevice
         TC(" qdisc del dev $device ingress",0);
     
         TC(" qdisc add dev $device ingress handle ffff:");
-        TC(" filter add dev $device parent ffff: protocol ip u32 match u32 0 0 action connmark action mirred egress redirect dev ifb0 flowid ffff:1");
+        TC(" filter add dev $device parent ffff: protocol ip u32 match u32 0 0 action connmark action mirred egress redirect dev $nat_device flowid ffff:1");
         TC(" qdisc del dev $nat_device root",0);
         TC(" qdisc add dev $nat_device root handle 1: htb default 4096");
         TC(" class add dev $nat_device parent 1: classid 1:1 htb rate 100Mbps ceil 1000Mbps");
@@ -1900,7 +1893,7 @@ sub CreateIPTablesTable
                  my ($clientid,$username,$region) = split('/',$customer);
                  if (defined $clientid)
                  {
-                    `iptables -t mangle -A QOS -j MARK -s $ip  -m mark --mark 0 --set-mark $clientid `;
+                    `iptables -t mangle -A QOS -j MARK -d $ip  -m mark --mark 0 --set-mark $clientid `;
                  }
             }
         }

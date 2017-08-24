@@ -43,6 +43,8 @@ my $view='';
 glob %main::class=();
 glob %main::status=();
 glob %main::QoSDevice=();
+glob $main::nat=1;
+glob $main::nat_device="ifb0";
 
 my $mode=10;
 glob $main::users_string="";
@@ -452,11 +454,12 @@ sub showdetails { #FOLD00
     
     
     
-   my $url= "http://www.macvendorlookup.com/api/v2/".$info[2];
+   my $url= "https://macvendors.co/api/".$info[2];
  my $json =get($url);
 
 if (defined $json)
 {
+    print $json;
     my $vendor;
     $vendor=$url.$json;
 try

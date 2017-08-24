@@ -193,8 +193,16 @@ sub setQoSDevice
     {
         $main::QoSDevice{$Options::network{$network}}{in}=1;
         print "$Options::network{$network} is networks $network in_device\n" if ($main::debug > 4);
+        if ($main::nat)
+            {
+                    $main::QoSDevice{$main::nat_device}{'out'}='1';
+                    #print "Setting ". $main::nat_device." as output\n";
+            }
+            else
+            {
         if ($Options::out_device{$network} =~m/\[(.*),(.*)/)
         {
+            
             my $deviceList=$Options::out_device{$network};
             $deviceList=~s#^\[##;
             $deviceList=~s#\]##;
@@ -204,13 +212,14 @@ sub setQoSDevice
                 print "$_ is networks $network out_device\n" if ($main::debug > 4);
                 $main::QoSDevice{$_}{'out'}='1';
             }
+            
         }
         else
         {
             print "$Options::out_device{$network} is networks $network out_device\n" if ($main::debug > 4);
             #        $main::QoSDevice{$Options::out_device{$network}}++;
             $main::QoSDevice{$Options::out_device{$network}}{'out'}='1';
-        }
+        }}
     }
 }
 

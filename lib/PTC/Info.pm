@@ -345,6 +345,7 @@ sub loadUsage
             print "Device $device is out_device\n" if ($main::debug > 2);
             $out_count++;
             $in_device=0;
+            
         }
         else
         {
@@ -477,6 +478,7 @@ sub loadSFQUsage
         if (exists $main::QoSDevice{$device}{out})
         {
             print "Device $device is out_device\n" if ($main::debug > 2);
+           
             $out_count++;
             $in_device=0;
         }
