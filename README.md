@@ -104,3 +104,5 @@ iptables-restore < /etc/iptables.up.rules
 
 <h2>Usage</h2>
 
+if nat is used on output , you'll need to enable ifb device to control traffic from in to out
+
