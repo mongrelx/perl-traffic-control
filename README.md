@@ -104,6 +104,7 @@ under Authorization section<br>
  Autz-Type PTC_USER {
                 sql
         }
+edit dictionary to have clientid string attribute
 </ul>
 
 edit /opt/perl-traffic-control/etc/AAA/home.AAA.conf to match your network
