@@ -2281,7 +2281,7 @@ sub checkUnwantedList
 sub checkUselessTables
 {
 
-    print STDERR "Checking useless chains\n";
+    print "Checking useless chains\n";
     my @chains=`iptables -L -n --line-numbers`;
     my $found=0;
     NEXT:
