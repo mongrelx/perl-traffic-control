@@ -34,7 +34,7 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> iptraf
 </ul>
 
-<h2>Installation on debian</h2>
+<h2>Installation on debian 8</h2>
 <ul>
 <li> apt-get install git
 <br>
@@ -47,7 +47,19 @@ This was in production usage between 2000-2012 and it performed quite nicely
 <li> cd /opt/
 <li> git clone https://github.com/mongrelx/perl-traffic-control.git
 </ul>
-
+<h2>Installation on debian 9</h2>
+<ul>
+<li> apt-get install git
+<br>
+<li> apt-get install libdbi-perl librrdtool-oo-perl 
+<li> apt-get install libdbd-mysql libdbd-mysql-perl 
+<li> apt-get install libconvert-ber-perl mysql-server freeradius-mysql libauthen-radius-perl
+<li> apt-get install libcurses-perl libjson-perl libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
+<li> cpan -i Curses::Application       
+<!---<li> cpan -i RRD ???-->
+<li> cd /opt/
+<li> git clone https://github.com/mongrelx/perl-traffic-control.git
+</ul>
 <h2>Configuration</h2>
 <h3>Database</h3>
 <ul>
@@ -81,7 +93,7 @@ under Authorization section<br>
 <ul>
         
 <h4>debian 9</h4>
-<li> edit /etc/freeradius/mods-available/sql to match db_user,db_pass,db_name
+<li> edit /etc/freeradius/3.0/mods-available/sql to match db_user,db_pass,db_name
 <li> enable mod sql
 <li> add to /etc/freeradius/3.0/users <br>
 DEFAULT Autz-Type :=PTC_USER <br>
