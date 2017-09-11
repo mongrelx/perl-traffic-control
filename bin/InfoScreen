@@ -1,9 +1,12 @@
 #!/usr/bin/perl -w
 
-use strict;
+
+use LWP::Simple;                # From CPAN
+use JSON qw( decode_json );     # From CPAN
+use Data::Dumper;               # Perl core module
+use strict;                     # Good practice
+use warnings;                   # Good practice
 use vars qw($VERSION);
-use LWP::Simple; 
-use JSON        qw(decode_json);
 use Try::Tiny;
 use Curses::Application;
 push(@INC,'/opt/perl-traffic-control/lib/');
@@ -453,21 +456,24 @@ sub showdetails { #FOLD00
     }
     
     
-    
+    chomp($info[2]);
    my $url= "https://macvendors.co/api/".$info[2];
- my $json =get($url);
-
+   #Fetch the actual data from the query
+   use LWP::UserAgent;
+use HTTP::Request;
+my $ua = new LWP::UserAgent;
+$ua->agent("Perl API Client/1.0");
+my $request = HTTP::Request->new("GET" => $url);
+my $response = $ua->request($request);
+my $json= JSON->new->utf8->decode($response->content); 
 if (defined $json)
 {
-    print $json;
-    my $vendor;
-    $vendor=$url.$json;
-try
-{
-my $decoded = decode_json($json);   
-$vendor = $decoded->[0]{'company'};
-
-}} 
+    
+    $w->getWidget("INFO")->setField(VALUE =>"VENDOR :".$json->{result}->{company});
+  
+}
+else
+{ $w->getWidget("INFO")->setField(VALUE =>"VENDOR=>".$url);}
 $app->execForm('Details');
 }
 
@@ -836,7 +842,7 @@ sub editExit {
                         {
                             glob $main::dbh_hpna = DBI->connect("DBI:mysql:$Options::dbh_dbase:$Options::dbh_host", $Options::dbh_user, $Options::dbh_pass);
                             my $msg=saveClientDevice($rec{MAC},$rec{FilterId},$rec{RadReply});
-                            if ($msg eq 1)
+                            if ($$msg =~/^OK/)
                             {
                                 #dialog('Saved', BTN_OK, 'Saved new information!',
                                 #      qw(white red yellow));
