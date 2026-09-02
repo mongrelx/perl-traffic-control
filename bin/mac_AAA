@@ -1,37 +1,19 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
-
-# 0 => no auth
-# 1 => everybody auths
-# 2 => ranged auth rest use QoS
-# 3 => ranged auth rest dont use QoS
-# 4 => no auth / no qos 
-
-#atHost{xx.xx.xx.xx/yy}=xx.xx.xx.xx
-#network{xx.xx.xx.xx/yy}=INDEVICE
-#out_device{xx.xx.xx.xx/yy}=[OUTDEVICE1,OUTDEVICE2]  || OUTDEVICE1
-#out_speed{xx.xx.xx.xx/yy}=DEFAULTSPEED or IPBASEDSPEED
-#in_speed{xx.xx.xx.xx/yy}=DEFAULTSPEED or IPBASEDSPEED
-#range{xx.xx.xx.xx/yy}=RANGE
-#method{xx.xx.xx.xx/yy}=ip || mac # mac is default
-#require_auth{xx.xx.xx.xx/yy}= 0 (never )| 1 (always) | 2 (ranged/QOS) | 3 (ranged/NOQOS)
-#
-#regional_rules{1}=-i eth2.91 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1100 
-#
-#
-#
 use strict;
+use warnings;
 use Authen::Radius;
 use Getopt::Std;
 use FileHandle;
-use lib qw(/opt/perl-traffic-control/lib);
+use FindBin;
+use lib "$FindBin::Bin/../lib";
 use PTC::NetUtils;
 use PTC::Utils;
+use PTC::Config;
 use POSIX ":sys_wait_h";
-use Getopt::Std;
 
 $SIG{CHLD} = \&REAPER;
-my $dir="/opt/perl-traffic-control";
+my $dir = get_config()->{home};
 my %options;
 my %unwantedHash=();
 my $removedRules=0;
@@ -1238,7 +1220,7 @@ else {
 sub addToClearList{
     my($mac)=@_;
 
-    open(CLEARLIST,">>/opt/perl-traffic-control/tmp/clearList");
+    open(CLEARLIST,">>$dir/tmp/clearList");
     print CLEARLIST "ERROR:CLEAR:".$mac.":END\n";
     close(CLEARLIST);
 }

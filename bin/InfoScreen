@@ -1,22 +1,21 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
-
-use LWP::Simple;                # From CPAN
-use JSON qw( decode_json );     # From CPAN
-use Data::Dumper;               # Perl core module
-use strict;                     # Good practice
-use warnings;                   # Good practice
-use vars qw($VERSION);
+use strict;
+use warnings;
+use LWP::Simple;
+use JSON qw( decode_json );
+use Data::Dumper;
 use Try::Tiny;
 use Curses::Application;
-push(@INC,'/opt/perl-traffic-control/lib/');
-use lib qw(/opt/perl-traffic-control/lib);
+use FindBin;
+use lib "$FindBin::Bin/../lib";
 use DBI;
 use PTC::Authen;
 use PTC::Device;
 use PTC::Utils;
 use PTC::NetUtils;
 use PTC::Info;
+use PTC::Config;
 use POSIX;
 use DirHandle;
 use POSIX ":sys_wait_h";
@@ -78,13 +77,9 @@ if (defined $opts{'s'})
 
 glob $main::debug=1;
 my $debug=$main::debug;
-my $ptc_db="localhost";
-my $ptc_table="ptc";
-my $ptc_user="ptc_user";
-my $ptc_pw="ptc_pass";
 
 PTC::Utils::loadConfig();
-my $dbh_ptc = DBI->connect("dbi:mysql:dbname=$ptc_table;host=".$ptc_db, $ptc_user, $ptc_pw);
+my $dbh_ptc = get_dbh();
 
 PTC::Utils::setQoSDevice();
 loaddir($current_order);
@@ -315,7 +310,8 @@ sub loadUnknownHost {
     my ($nan,$auth,$redir)=(0,0,0);
     #    my @temp;
     my $file_msg='';
-    my $online_file="/opt/perl-traffic-control/tmp/unknown_hosts";
+    my $ptc_home = get_config()->{home};
+    my $online_file="$ptc_home/tmp/unknown_hosts";
     if ( -e $online_file )
     {
         my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$block) = stat($online_file);
@@ -694,7 +690,8 @@ sub clearAuth
     }
     else
     {
-        open(CLEARLIST,">>/opt/perl-traffic-control/tmp/clearList");
+        my $ptc_home = get_config()->{home};
+        open(CLEARLIST,">>$ptc_home/tmp/clearList");
         foreach (@info)
         {
             print CLEARLIST $_.":"
@@ -1032,7 +1029,8 @@ sub blacklistExit {
                         {
                             dialog('Added', BTN_OK, 'Added '.$rec{ClientId}."/".$rec{MAC}.' to blacklist!',
                             qw(white red yellow));
-                            open(CLEARLIST,">>/opt/perl-traffic-control/tmp/clearList");
+                            my $ptc_home = get_config()->{home};
+                            open(CLEARLIST,">>$ptc_home/tmp/clearList");
                             print CLEARLIST "CLEARING:N/A:$rec{MAC}:N/A:::\n";
                             close(CLEARLIST);
                             

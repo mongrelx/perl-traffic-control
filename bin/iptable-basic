@@ -1,5 +1,8 @@
-#!/usr/bin/perl 
-use lib qw(/opt/perl-traffic-control/lib);
+#!/usr/bin/perl
+use strict;
+use warnings;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
 use PTC::Utils;
 
 my $cfg_file=shift;

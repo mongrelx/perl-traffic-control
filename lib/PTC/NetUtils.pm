@@ -1,15 +1,14 @@
 package PTC::NetUtils;
 
-
-require 5.000;
+use strict;
+use warnings;
 use Exporter;
 use Carp;
 
+our @ISA = qw(Exporter);
+our @EXPORT = qw(addBlackListItem addBlackListDB loadBlackList loadBlackListDB closeBlackListItem closeBlackListDB REASONS setBlackListDBReadTime RemoveIPTablesRedirectFromApache);
 
-@ISA = qw(Exporter);
-@EXPORT = qw(addBlackListItem addBlackListDB loadBlackList loadBlackListDB closeBlackListItem closeBlackListDB REASONS setBlackListDBReadTime RemoveIPTablesRedirectFromApache);
-
-@REASONS=qw(SPAM WORM ABUSE COPYRIGHT MESSAGE LOCKED);
+our @REASONS=qw(SPAM WORM ABUSE COPYRIGHT MESSAGE LOCKED);
 
 
 
@@ -38,7 +37,7 @@ sub loadBlackListDB
         $BlackList{$row[0]}{'usergroup'}=$row[1];
         my $sth2 = $main::dbh_ptc->prepare("SELECT * FROM blacklist WHERE username = ? AND StopTime='0000-00-00 00:00:00';");
         $sth2->execute($row[0]);
-        while ( @row2 = $sth2->fetchrow_array ) {
+        while ( my @row2 = $sth2->fetchrow_array ) {
             $BlackList{$row[0]}{'reason'}=$row2[2];
             $BlackList{$row[0]}{'notes'}=$row2[3];
             $BlackList{$row[0]}{'point'}=$row2[4];
@@ -190,7 +189,6 @@ sub loadBlackList
     my $action=shift;
     my %BlackList=();
     my @row=`iptables -L BLACKLIST -t nat --line-numbers -n -v`;
-    @history=();
     foreach (@row) {
         if ($_=~m#^(\d+)\s+.*MAC\s+(.*)\s+tcp\s+dpt:80#)
         {
