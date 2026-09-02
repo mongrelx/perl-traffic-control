@@ -95,7 +95,7 @@ sub addBlackListDB
     $mac=lc($mac);
     if ($mac !~m#(..\:..\:..\:..\:..\:..)#)
     {
-        my $error_str="Laitteisto-osoite ei kelpaa : $mac";
+        my $error_str="Invalid MAC address: $mac";
         return \$error_str;
     }
     else
@@ -103,7 +103,7 @@ sub addBlackListDB
         
         if (&checkDB($mac))
         {
-            my $error_str="On jo sulkulistalla : $mac";
+            my $error_str="Already blacklisted: $mac";
             return \$error_str;
         }
         else
@@ -179,7 +179,7 @@ sub closeBlackListItem
         }
         $line=$BlackList{uc($mac)}{'VIRUS'};
         `iptables -D VIRUS $line`;
-        print "MAC $mac poistettu\n";
+        print "MAC $mac removed\n";
     }
 }
 

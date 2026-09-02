@@ -21,8 +21,8 @@ use DirHandle;
 use POSIX ":sys_wait_h";
 use Getopt::Std;
 
-my $clock_count=0;
-my $selected=0;
+my $clock_count = 0;
+my $selected = 0;
 
 #####################################################################
 #
@@ -30,203 +30,155 @@ my $selected=0;
 #
 #####################################################################
 
-glob $main::distribution="debian";
-glob $VERSION="1.0";
-chomp($VERSION);
-$VERSION=$VERSION." ".$main::distribution;
-chomp($VERSION);
+our $VERSION = "2.0";
+our $main::distribution = "debian";
+$VERSION .= " $main::distribution";
 
-my @Current=("N/A");
-my @Auth=("N/A");
+my @Current = ("N/A");
+my @Auth = ("N/A");
 my @configs;
-my $current_order=0;
-my $MAX_TABS=7;
-my $view='';
-glob %main::class=();
-glob %main::status=();
-glob %main::QoSDevice=();
-glob $main::nat=1;
-glob $main::nat_device="ifb0";
+my $current_order = 0;
+my $MAX_TABS = 7;
+my $view = '';
+our %main::class = ();
+our %main::status = ();
+our %main::QoSDevice = ();
+our $main::nat = 1;
+our $main::nat_device = "ifb0";
 
-my $mode=10;
-glob $main::users_string="";
-my $database=0;
+my $mode = 10;
+our $main::users_string = "";
+my $database = 0;
 
 my %opts;
 getopts('spga', \%opts);
 
+$opts{'a'} //= 1;
 
-if (!defined ($opts{'a'}))
-{
-    $opts{'a'}=1;
+if ($opts{'s'}) {
+    require RRDTool::OO;
+    require Time::HiRes;
+    Time::HiRes->import(qw(usleep gettimeofday));
 }
 
-if (defined $opts{'s'})
-{
-    #use RRD::Config;
-    #use RRD::Info;
-    use RRDTool::OO;
-    use Time::HiRes qw(usleep gettimeofday);
-}
 #####################################################################
 #
 # Program Logic starts here
 #
 #####################################################################
 
-
-glob $main::debug=1;
-my $debug=$main::debug;
+our $main::debug = 1;
+my $debug = $main::debug;
 
 PTC::Utils::loadConfig();
 my $dbh_ptc = get_dbh();
 
 PTC::Utils::setQoSDevice();
 loaddir($current_order);
-my ($app,$f, $w, $rv);
+my ($app, $f, $w, $rv);
 my ($cw, $l, @tmp, $d, @tmp2);
 
 chomp($d = `pwd`);
 
-my $ref_tmp =  loaddir($current_order);;
-if ($ref_tmp ne -1)
-{
-    @tmp2=@$ref_tmp;
-}
+my $ref_tmp = loaddir($current_order);
+@tmp2 = @$ref_tmp if ref $ref_tmp eq 'ARRAY';
 
-if ($opts{'s'})
-{
-    foreach (@tmp2)
-    {
-        print @$_[4]." ".@$_[5]." ".@$_[6]."\n" if ($opts{x});
-        my $nfo="clientStats";
-        @$_[4]=~m#(\d+)\/.*#;
-        my $clientid=$1;
+if ($opts{'s'}) {
+    foreach my $row (@tmp2) {
+        print "$row->[4] $row->[5] $row->[6]\n" if $opts{x};
+        $row->[4] =~ m#(\d+)\/.*#;
+        my $clientid = $1;
 
-        if (
-            (!defined $clientid) ||
-            ($clientid !~/\d+/)
-           )
-            
-        {
+        next unless defined $clientid && $clientid =~ /\d+/;
 
+        if ($opts{'s'} && $opts{'a'}) {
+            my @info = split('/', $row->[0]);
+            arping_stats($clientid, $info[1], $row->[1], $row->[2]);
         }
-        else
-        {
-            if (defined $opts{'s'} && defined $opts{'a'})
-            {
-                my @info=split('/',@$_[0]);
-                arping_stats($clientid,$info[1],@$_[1],@$_[2]);
-            }
 
-            @$_[5]=~m#(\d+).*\/(\d+)#;
-            my $inb=$1;
-            my $inp=$2;
+        $row->[5] =~ m#(\d+).*\/(\d+)#;
+        my ($inb, $inp) = ($1, $2);
 
-            @$_[6]=~m#(\d+).*\/(\d+)#;
-            my $outb=$1;
-            my $outp=$2;
+        $row->[6] =~ m#(\d+).*\/(\d+)#;
+        my ($outb, $outp) = ($1, $2);
 
-            my $info = virtual RRD::Info($clientid,@$_[4]);
-           my $rrd; 
-		my $current_time = gettimeofday() if $opts{p};;
-            $info->CheckPathsVirtual($1);
-            if (
-                (!defined $inb) ||
-                (!defined $inp) ||
-                (!defined $outb) ||
-                (!defined $outp)
-               )
+        my $info = virtual RRD::Info($clientid, $row->[4]);
+        my $current_time = gettimeofday() if $opts{p};
+        $info->CheckPathsVirtual($1);
 
-            {
-                print "NO VALUES FOR $clientid \n" if ($debug > 0);;
-            }
-            else
-            {
-                print "UPDATING $clientid $inb/$inp $outb/$outp\n" if ($debug > 0);
-                $rrd->update(time=>$current_time,
-				values => {
-					"inb" => $inb,
-					"inp" => $inp,
-					"outb" => $outb,
-					"outp" => $outp	
-				}); 
-#		$info->{Function}->Update($inb,$inp,$outb,$outp);
-            }
-            if ($opts{g})
-            {
-                $info->{Function}->Graph($clientid."-1hour",-7200);
-                $info->{Function}->Graph($clientid."-1day",-86400);
-                $info->{Function}->Graph($clientid."-1week",-604800);
-                $info->{Function}->Graph($clientid."-8weeks",-4838400);
-                $info->{Function}->Graph($clientid."-2years",-63072000);
-            }
-            my $diff = gettimeofday() - $current_time if $opts{p};;
-            printf ("%.3f $nfo\n",$diff) if $opts{p};
-            if ($opts{p})
-            {
-                my $r = $info->{Function}->{LastRead};
-                if ( defined $r ) {
-                    print "Results from the update: ";
-                    print $info->{Function}->{LastRead};
-                    print "\nDone in $diff\n";
-                }else{
-                    print "No results were found, recheck your config!\n";
-                    print "Done, with errors\n";
-                }
+        unless (defined $inb && defined $inp && defined $outb && defined $outp) {
+            print "NO VALUES FOR $clientid\n" if $debug > 0;
+            next;
+        }
+
+        print "UPDATING $clientid $inb/$inp $outb/$outp\n" if $debug > 0;
+        my $rrd;
+        $rrd->update(
+            time   => $current_time,
+            values => { inb => $inb, inp => $inp, outb => $outb, outp => $outp }
+        );
+
+        if ($opts{g}) {
+            for my $period (['1hour', -7200], ['1day', -86400], ['1week', -604800],
+                            ['8weeks', -4838400], ['2years', -63072000]) {
+                $info->{Function}->Graph("$clientid-$period->[0]", $period->[1]);
             }
         }
-        #        foreach (@$_)
-        #{
-        #    print $_."\n";
-        #}
+
+        if ($opts{p}) {
+            my $diff = gettimeofday() - $current_time;
+            printf "%.3f clientStats\n", $diff;
+            if (my $r = $info->{Function}->{LastRead}) {
+                print "Results: $r\nDone in $diff\n";
+            } else {
+                print "No results found, recheck config!\n";
+            }
+        }
     }
 }
-else
-{
-    $app = Curses::Application->new(
-                                    {
-                                        FOREGROUND    => 'white',
-                                        BACKGROUND    => 'blue',
-                                       CAPTIONCOL    => 'yellow',
-                                       TITLEBAR      => 1,
-                                       CAPTION       => "PTC Router v$VERSION",
-                                       MAINFORM      => { Main  => 'MainFrm' },
-                                       INPUTFUNC     => \&myscankey,
-                                   }
-                                  );
-    # Create the MainFrm early, since we need to adjust a few parameters
-    # of the ListBoxes (cwd entries and geometry)
-    $cw = int(($app->maxyx)[1] ) - 2;
-    $l = ($app->maxyx)[0] - 5;
+else {
+    $app = Curses::Application->new({
+        FOREGROUND => 'white',
+        BACKGROUND => 'blue',
+        CAPTIONCOL => 'yellow',
+        TITLEBAR   => 1,
+        CAPTION    => "PTC Router v$VERSION",
+        MAINFORM   => { Main => 'MainFrm' },
+        INPUTFUNC  => \&myscankey,
+    });
+
+    $cw = int(($app->maxyx)[1]) - 2;
+    $l  = ($app->maxyx)[0] - 5;
+
     $app->createForm(qw(Main MainFrm));
     $w = $app->getForm('Main')->getWidget('lstConn');
     @tmp = @{$w->getField('COLWIDTHS')};
     $w->setField(
-                 CAPTION     => "Connected: ".scalar(@tmp2)." ".$main::users_string,
-                 LINES       => $l - 1,
-                 COLUMNS     => $cw,
-                 LISTITEMS   => [@tmp2],
-                 COLWIDTHS   => [@tmp],
-                 CWD         => $d,
-                );
-    my @netmenu_items=();
-    my %net_menu=();
-    $w = $app->getForm('Main')->getWidget('Menu');
-    foreach my $network (keys %Options::network)
-    {
-        push(@netmenu_items,$network);
-        $net_menu{$network}=\&main::show;
-        #    $w->{WIDGETS}{'Menu'}{MENUS}{Network}{$network}=\&show($network);
+        CAPTION   => "Connected: " . scalar(@tmp2) . " $main::users_string",
+        LINES     => $l - 1,
+        COLUMNS   => $cw,
+        LISTITEMS => [@tmp2],
+        COLWIDTHS => [@tmp],
+        CWD       => $d,
+    );
+
+    # Build network menu dynamically
+    my %net_menu;
+    my @netmenu_items;
+    foreach my $network (sort keys %Options::network) {
+        push @netmenu_items, $network;
+        $net_menu{$network} = \&main::show;
     }
-    $net_menu{ITEMORDER} =  [@netmenu_items];
+    $net_menu{ITEMORDER} = [@netmenu_items];
+
+    $w = $app->getForm('Main')->getWidget('Menu');
     $w->setField(
-                 MENUS => {
-                     MENUORDER => [qw(File Show Network Tools)],
-                     Network => \%net_menu,
-                 }
-                );
-    # Start the input loop
+        MENUS => {
+            MENUORDER => [qw(File Show Network Tools)],
+            Network   => \%net_menu,
+        }
+    );
+
     $app->execute;
     $dbh_ptc->disconnect();
     exit 0;
@@ -238,66 +190,44 @@ else
 #
 #####################################################################
 
-sub show
-{
-    my $network=shift;
+sub show {
+    my $network = shift;
 }
 
 
+sub myscankey {
+    my $mwh = shift;
+    my $key = -1;
 
+    while ($key eq -1) {
+        clockUpdate();
+        $key = $mwh->getch;
+    }
 
-
-
-sub myscankey { #FOLD00
-  # Same thing as the standard scankey provided by Curses::Widgets, 
-  # except that we want to update our clock regularly.
-  #
-  # Usage:  $key = myscankey($mwh);
-
-  my $mwh = shift;
-  my $key = -1;
-
-  while ($key eq -1) {
-      clockUpdate();
-      $key = $mwh->getch
-  };
-
-return $key;
+    return $key;
 }
 
-sub clockUpdate { #FOLD00
-    # Updates the clock in the titlebar
-    #
-    # Usage:  clock();
-    if (($clock_count < 100) && ($selected eq 0))
-    {
+sub clockUpdate {
+    if ($clock_count < 100 && $selected == 0) {
         sleep(0.5);
-        my $time=`uptime`;
-        chomp($time);
-        #my $time = scalar localtime;
-        #$time=$uptime." ".$time;
+        my $time = `uptime`;
+        chomp $time;
         my $x = ($app->maxyx)[1] - length($time);
         my $caption = substr($app->getField('CAPTION'), 0, $x);
         $caption .= ' ' x ($x - length($caption)) . $time;
         $app->titlebar($caption);
-        $clock_count=150;
-    }
-    else
-    {
+        $clock_count = 150;
+    } else {
         sleep(0.5);
         $clock_count--;
     }
 }
 
-sub quit { #FOLD00
-    # Queries the user if they really want to quit
-    #
-    # Usage:  quit();
-
+sub quit {
     $rv = dialog('Quit Application?', BTN_YES | BTN_NO,
                  'Are you sure you want to quit?', qw(white red yellow));
     $dbh_ptc->disconnect();
-    exit 0 unless ($rv);
+    exit 0 unless $rv;
 }
 
 
@@ -305,864 +235,553 @@ sub quit { #FOLD00
 
 
 sub loadUnknownHost {
-
-    my (@rv);
-    my ($nan,$auth,$redir)=(0,0,0);
-    #    my @temp;
-    my $file_msg='';
+    my @rv;
+    my ($nan, $auth, $redir) = (0, 0, 0);
+    my $file_msg = '';
     my $ptc_home = get_config()->{home};
-    my $online_file="$ptc_home/tmp/unknown_hosts";
-    if ( -e $online_file )
-    {
-        my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$block) = stat($online_file);
-        $file_msg=time-$mtime;
-        if ((time-$mtime) > 300)
-        {
-            $file_msg="Check daemon\n";
+    my $online_file = "$ptc_home/tmp/unknown_hosts";
+
+    if (-e $online_file) {
+        my @stat = stat($online_file);
+        $file_msg = time - $stat[9];
+        $file_msg = "Check daemon\n" if (time - $stat[9]) > 300;
+
+        open(my $fh, '<', $online_file);
+        while (<$fh>) {
+            chomp;
+            push @rv, $_;
         }
-        else
-        {
-        }
-        open(F,"<$online_file");
-        while (<F>)
-        {
-            chomp();
-            push (@rv,$_);
-        }
-        @rv = map  {
-            my @temp=split(":",$_);
-            my $msg;
-            for (my $i=0;$i<13;$i++)
-            {
-                $temp[$i]="N/A" if (! defined $temp[$i]);
+        close($fh);
+
+        @rv = map {
+            my @temp = split(":", $_);
+            for my $i (0..12) {
+                $temp[$i] //= "N/A";
             }
-            my $str="$temp[2]:$temp[3]:$temp[4]:$temp[5]:$temp[6]:$temp[7]";
-            $main::status{$str}{ip}=$temp[1];
-            my $str2="N/A";
-            my $str3="N/A";
-
-            [$temp[0],$temp[1],$str ]
-
+            my $str = "$temp[2]:$temp[3]:$temp[4]:$temp[5]:$temp[6]:$temp[7]";
+            $main::status{$str}{ip} = $temp[1];
+            [$temp[0], $temp[1], $str];
         } sort @rv;
     }
-    close(F);
-    $main::users_string="(last update : $file_msg s) Not auth : $nan Authenticated : $auth Redirected : $redir";
+
+    $main::users_string = "(last update: ${file_msg}s) Not auth: $nan Auth: $auth Redirected: $redir";
     return \@rv;
 }
 
 
-sub updateList { #FOLD00
-
+sub updateList {
     my $w = shift;
-    my $search=shift;
+    my $search = shift;
     my $ref_tmp;
-    if ( (defined $search) && ($search ne ''))
-    {
-        $ref_tmp =  loaddir($current_order,$search,1,$database);
+
+    if (defined $search && $search ne '') {
+        $ref_tmp = loaddir($current_order, $search, 1, $database);
+    } else {
+        $ref_tmp = loaddir($current_order);
     }
-    else
-    {
-        $ref_tmp =  loaddir($current_order);;
-    }
-    if ($ref_tmp ne -1)
-    {
-        my @tmp2=@$ref_tmp;
+
+    if (ref $ref_tmp eq 'ARRAY') {
+        @tmp2 = @$ref_tmp;
         $w->setField(
-                     LISTITEMS   => [@tmp2],
-                     CAPTION     => 'Connected '.scalar(@tmp2)." ".$current_order." ".$main::users_string,
-                    );
-
+            LISTITEMS => [@tmp2],
+            CAPTION   => 'Connected ' . scalar(@tmp2) . " $current_order $main::users_string",
+        );
     }
-
-
 }
 
-sub updateLog { #FOLD00
-
+sub updateLog {
     my $w = shift;
-    my $ref_tmp =  loaddir($current_order);;
-    if ($ref_tmp ne -1)
-    {
-        my @tmp2=@$ref_tmp;
+    my $ref_tmp = loaddir($current_order);
+
+    if (ref $ref_tmp eq 'ARRAY') {
+        @tmp2 = @$ref_tmp;
         $w->setField(
-                     LISTITEMS   => [@tmp2],
-                     CAPTION     => 'UPDATE '.scalar(@tmp2)." ".$main::users_string,
-                    );
-
+            LISTITEMS => [@tmp2],
+            CAPTION   => 'UPDATE ' . scalar(@tmp2) . " $main::users_string",
+        );
     }
+}
 
-
+sub DEBUG {
+    my $msg = shift;
+    open(my $fh, '>>', 'debug.log');
+    print $fh "$msg\n";
+    close($fh);
 }
 
 
-sub DEBUG #FOLD00
-{
-    my $msg=shift;
-    open(F,">>debug.log");
-    print F $msg."\n";
-    close(F);
-}
+sub showdetails {
+    my $f = shift;
+    $selected = 1;
 
-
-sub showdetails { #FOLD00
-    
-
-    my $f=shift;
-    
-    $selected=1;
-    
     my @items = @{$f->getField('LISTITEMS')};
     my $rec = $items[$f->getField('CURSORPOS')];
-    my @info=@$rec[0,1,2,3,4,5,6,7];
-    
+    my @info = @$rec[0,1,2,3,4,5,6,7];
+
     $app->createForm('Details', 'DetailsFrm');
-    
     $w = $app->getForm('Details');
-    
-    my $i=0;
-    foreach (qw(STATUS IP MAC SPEED CLIENT ))
-    {
-        if (defined $info[$i])
-        {
-            $w->getWidget($_)->setField(VALUE => "$info[$i]");
-        }
-        $i++;
+
+    # Populate basic fields
+    my @fields = qw(STATUS IP MAC SPEED CLIENT);
+    for my $i (0..$#fields) {
+        $w->getWidget($fields[$i])->setField(VALUE => "$info[$i]") if defined $info[$i];
     }
-    
-    
+
+    # Show redirect status
     $w->getWidget("REDIRECT")->setField(VALUE => "$main::status{$info[2]}{redirect}");
-    if ($main::status{$info[2]}{redirect})
-    {}
-    else
-    {
-    $w->getWidget("INCLASS")->setField(VALUE => "$main::status{$info[2]}{inclass}");
-    $w->getWidget("OUTCLASS")->setField(VALUE => "$main::status{$info[2]}{outclass}");
-    if ($main::status{$info[2]}{inclass} ne "NOQOS")
-    {
-        if (defined $main::class{$main::status{$info[2]}{inclass}}{bytes})
-        {
-            $w->getWidget("INTRAFFIC")->setField(VALUE => $main::class{$main::status{$info[2]}{inclass}}{bytes}." bytes ".$main::class{$main::status{$info[2]}{inclass}}{pkts}." pkts ");
-            $w->getWidget("OUTTRAFFIC")->setField(VALUE => $main::class{$main::status{$info[2]}{outclass}}{bytes}." bytes ".$main::class{$main::status{$info[2]}{outclass}}{pkts}." pkts ");
+
+    unless ($main::status{$info[2]}{redirect}) {
+        $w->getWidget("INCLASS")->setField(VALUE => "$main::status{$info[2]}{inclass}");
+        $w->getWidget("OUTCLASS")->setField(VALUE => "$main::status{$info[2]}{outclass}");
+
+        if ($main::status{$info[2]}{inclass} ne "NOQOS") {
+            my $in_class = $main::status{$info[2]}{inclass};
+            my $out_class = $main::status{$info[2]}{outclass};
+            if (defined $main::class{$in_class}{bytes}) {
+                $w->getWidget("INTRAFFIC")->setField(VALUE =>
+                    "$main::class{$in_class}{bytes} bytes $main::class{$in_class}{pkts} pkts");
+                $w->getWidget("OUTTRAFFIC")->setField(VALUE =>
+                    "$main::class{$out_class}{bytes} bytes $main::class{$out_class}{pkts} pkts");
+            }
         }
     }
-    else
-    {
-        
-    }
-    }
-    
-    
+
+    # Fetch MAC vendor info
     chomp($info[2]);
-   my $url= "https://macvendors.co/api/".$info[2];
-   #Fetch the actual data from the query
-   use LWP::UserAgent;
-use HTTP::Request;
-my $ua = new LWP::UserAgent;
-$ua->agent("Perl API Client/1.0");
-my $request = HTTP::Request->new("GET" => $url);
-my $response = $ua->request($request);
-my $json= JSON->new->utf8->decode($response->content); 
-if (defined $json)
-{
-    
-    $w->getWidget("INFO")->setField(VALUE =>"VENDOR :".$json->{result}->{company});
-  
-}
-else
-{ $w->getWidget("INFO")->setField(VALUE =>"VENDOR=>".$url);}
-$app->execForm('Details');
+    my $url = "https://macvendors.co/api/$info[2]";
+    eval {
+        require LWP::UserAgent;
+        require HTTP::Request;
+        my $ua = LWP::UserAgent->new(agent => "PTC/2.0", timeout => 5);
+        my $response = $ua->get($url);
+        if ($response->is_success) {
+            my $json = JSON->new->utf8->decode($response->content);
+            if ($json->{result}{company}) {
+                $w->getWidget("INFO")->setField(VALUE => "VENDOR: $json->{result}{company}");
+            }
+        }
+    };
+    $w->getWidget("INFO")->setField(VALUE => "VENDOR: lookup failed") if $@;
+
+    $app->execForm('Details');
 }
 
 sub editInfo {
-    
+    my $f = shift;
+    $selected = 1;
 
-    my $f=shift;
-
-    $selected=1;
     my @items = @{$f->getField('LISTITEMS')};
     my $rec = $items[$f->getField('CURSORPOS')];
-    my @info=@$rec[0,1,2,3,4,5,6,7];
-    
+    my @info = @$rec[0,1,2,3,4,5,6,7];
+
     $app->createForm('Edit', 'EditFrm');
-    
     $w = $app->getForm('Edit');
+
     $w->getWidget("MAC")->setField(VALUE => "$info[2]");
     $w->getWidget("REDIRECT")->setField(VALUE => "$main::status{$info[2]}{redirect}");
     $w->getWidget("FilterId")->setField(VALUE => "$main::status{$info[2]}{speed}");
     $w->getWidget("RadReply")->setField(VALUE => "$main::status{$info[2]}{customer}");
-    if ($main::status{$info[2]}{redirect})
-    {
-    }
-    else
-    {
-    }
 
     $app->execForm('Edit');
-    
 }
 
 sub showInterfaces {
-    
+    my $f = shift;
 
-    my $f=shift;
-
-    
     my @items = @{$f->getField('LISTITEMS')};
     my $rec = $items[$f->getField('CURSORPOS')];
-    my @info=@$rec[0,1,2,3,4,5,6,7];
-    
-    $app->createForm('Interfaces', 'InterfaceDetailFrm');
-    #$w = $app->getForm('Interfaces');
-    #$w = $app->getForm('Interfaces')->getWidget('IntList');
-    
-    
-    #$w = $app->getForm('Interfaces')->getWidget('IntList');
-    #my $ref_tmp =  loaddir('Auth');
-    #if ($ref_tmp ne -1)
-    #{
-    #    @tmp2=@$ref_tmp;
-    #}
-    #    $w->setField(
-    #             CAPTION     => "Interfaces: ".scalar(@tmp2)." ".$main::users_string,
-    #             LINES       => $l - 1,
-    #            COLUMNS     => $cw,
-    #             LISTITEMS   => [@tmp2],
-    #             COLWIDTHS   => [@tmp],
-    #             CWD         => $d,
-    #            );
 
-    #    $app->execute;
-    
-        #$app->execForm('Interfaces');
-    #$app->delForm('Interfaces');
+    $app->createForm('Interfaces', 'InterfaceDetailFrm');
+    # TODO: Populate interface stats from tc output
 }
 
-sub srcexit { #FOLD00
-
+sub srcexit {
     my $f = shift;
     my $key = shift;
-    my $w = $f->getWidget('lstConn');
+    $w = $f->getWidget('lstConn');
 
+    my %actions = (
+        "\n" => sub { $f->setField(DONTSWITCH => 1); showdetails($w); },
+        "q"  => sub { $view = ''; $database = 0; $f->setField(DONTSWITCH => 1); updateList($w, $view); },
+        "u"  => sub { $f->setField(DONTSWITCH => 1); updateList($w, $view, $database); },
+        "o"  => sub {
+            $f->setField(DONTSWITCH => 1);
+            $current_order = ($current_order + 1) % ($MAX_TABS + 1);
+            updateList($w, $view);
+        },
+        "h"  => sub {
+            $f->setField(DONTSWITCH => 1);
+            my $ref = loadUnknownHost();
+            @tmp2 = @$ref if ref $ref eq 'ARRAY';
+            $view = "unknown";
+            $w->setField(
+                CAPTION   => "Found: " . scalar(@tmp2) . " $main::users_string",
+                LISTITEMS => [@tmp2],
+            );
+            $app->execute;
+        },
+        "r"  => sub {
+            $f->setField(DONTSWITCH => 1);
+            my $ref = loadUnknownHost();
+            @tmp2 = @$ref if ref $ref eq 'ARRAY';
+            $view = "unknown";
+            $w->setField(
+                CAPTION   => "Found: " . scalar(@tmp2) . " $main::users_string",
+                LISTITEMS => [@tmp2],
+            );
+            $app->execute;
+        },
+        "a"  => sub { showAAALog($w); },
+        "i"  => sub { showInterfaces($w); },
+        "e"  => sub { editInfo($w); },
+        "?"  => sub { $f->setField(DONTSWITCH => 1); showHelp($w); },
+        "c"  => sub { $f->setField(DONTSWITCH => 1); clearAuth($w); },
+        "s"  => sub { $f->setField(DONTSWITCH => 1); searchItem($w); },
+        "x"  => sub { $dbh_ptc->disconnect(); exit; },
+    );
 
-    if ($key eq "\n") {
-
-        $f->setField(DONTSWITCH => 1);
-        showdetails($w);
-    }
-    elsif (lc($key) eq "q" )
-    {
-        $view='';
-        $database=0;
-        $f->setField(DONTSWITCH => 1);
-        updateList($w,$view);
-    }
-    elsif (lc($key) eq "u" ) 
-    {
-        $f->setField(DONTSWITCH => 1);
-        updateList($w,$view,$database);
-    }
-    elsif (lc($key) eq "o" )
-    {
-        $f->setField(DONTSWITCH => 1);
-        $current_order++;
-        if ($current_order > $MAX_TABS)
-        {
-            $current_order=0;
-        }
-        updateList($w,$view);
-    }
-    elsif (lc($key) eq "h")
-    {
-
-        $f->setField(DONTSWITCH => 1);
-        #my $w = $app->getForm('Main')->getWidget('lstConn');
-        my $ref_tmp =  loadUnknownHost();
-        if ($ref_tmp ne -1)
-        {
-            @tmp2=@$ref_tmp;
-        }
-        $view="unknown";
-        $w->setField(
-                     CAPTION     => "Found: ".scalar(@tmp2)." ".$main::users_string,
-                     LISTITEMS   => [@tmp2],
-                    );
-        $app->execute;
-    }
-    elsif (lc($key) eq "r")
-    {
-
-        $f->setField(DONTSWITCH => 1);
-        #my $w = $app->getForm('Main')->getWidget('lstConn');
-        my $ref_tmp =  loadUnknownHost();
-        if ($ref_tmp ne -1)
-        {
-            @tmp2=@$ref_tmp;
-        }
-        $view="unknown";
-        $w->setField(
-                     CAPTION     => "Found: ".scalar(@tmp2)." ".$main::users_string,
-                     LISTITEMS   => [@tmp2],
-                    );
-        $app->execute;
-    }
-
-    elsif (lc($key) eq "a")
-    {
-        showAAALog($w);
-    }
-    elsif (lc($key) eq "i")
-    {
-        showInterfaces($w);
-    }
-    elsif (lc($key) eq "e")
-    {
-        editInfo($w);
-    }
-    elsif ($key eq "?")
-    {
-        $f->setField(DONTSWITCH => 1);
-        showHelp($w);
-    }
-    elsif (lc($key) eq "c")
-    {
-        $f->setField(DONTSWITCH => 1);
-        clearAuth($w);
-    }
-    elsif (lc($key) eq "s")
-    {
-        $f->setField(DONTSWITCH => 1);
-        searchItem($w);
-    }
-    elsif (lc($key) eq "x")
-    {
-        $dbh_ptc->disconnect();
-        exit;
+    my $lc_key = lc($key);
+    if (exists $actions{$lc_key}) {
+        $actions{$lc_key}->();
+    } elsif (exists $actions{$key}) {
+        $actions{$key}->();
     }
 }
 
-sub searchItem
-{
-    my $f=shift;
-    my @items = @{$f->getField('LISTITEMS')};
-    my $rec = $items[$f->getField('CURSORPOS')];
-    my @info=@$rec[0,1,2,3,4,5,6,7];
-    
+sub searchItem {
+    my $f = shift;
     $app->createForm('Search', 'SearchFrm');
     $w = $app->getForm('Search');
-    #$w->getWidget("MAC")->setField(VALUE => "$info[2]");
-    #$w->getWidget("REDIRECT")->setField(VALUE => "$main::status{$info[2]}{redirect}");
-    #$w->getWidget("FilterId")->setField(VALUE => "$main::status{$info[2]}{speed}");
-    #$w->getWidget("RadReply")->setField(VALUE => "$main::status{$info[2]}{customer}");
-    #if ($main::status{$info[2]}{redirect})
-    #{
-    #}
-    #else
-    #{
-    #}
     $app->execForm('Search');
 }
 
-sub showHelp
-{
-    my $f=shift;
-    $selected=1;
+sub showHelp {
+    my $f = shift;
+    $selected = 1;
     $app->createForm('Help', 'HelpFrm');
     $w = $app->getForm('Help');
-    $w->getWidget("HELPTEXT")->setField(VALUE => 
-                                        "[u]\tUpdate list\n[s]\tSearch\n[q]\tReset\n[h]\tPrivate IPs\n[x]\tExit\n
-                                              ");
+    $w->getWidget("HELPTEXT")->setField(VALUE =>
+        "[Enter]\tShow details\n" .
+        "[u]\tUpdate list\n" .
+        "[s]\tSearch\n" .
+        "[q]\tReset view\n" .
+        "[o]\tChange sort order\n" .
+        "[h]\tShow unknown hosts\n" .
+        "[e]\tEdit client\n" .
+        "[c]\tClear authentication\n" .
+        "[a]\tShow AAA log\n" .
+        "[i]\tShow interfaces\n" .
+        "[?]\tThis help\n" .
+        "[x]\tExit"
+    );
     $app->execForm('Help');
-    my @help=[432432];
-    
-
 }
 
-sub clearAuth
-{
-    my $f=shift;
+sub clearAuth {
+    my $f = shift;
     my @items = @{$f->getField('LISTITEMS')};
     my $rec = $items[$f->getField('CURSORPOS')];
-    my @info=@$rec[0,1,2,3,4,5,6];
+    my @info = @$rec[0,1,2,3,4,5,6];
+
     $rv = dialog('', BTN_YES | BTN_NO,
                  "Clear $info[2] authentication?", qw(white red yellow));
-    if ($rv) 
-    {
-    }
-    else
-    {
-        my $ptc_home = get_config()->{home};
-        open(CLEARLIST,">>$ptc_home/tmp/clearList");
-        foreach (@info)
-        {
-            print CLEARLIST $_.":"
-        }
-        print CLEARLIST "\n";
-        close(CLEARLIST);
 
+    unless ($rv) {
+        my $ptc_home = get_config()->{home};
+        open(my $fh, '>>', "$ptc_home/tmp/clearList");
+        print $fh join(":", @info) . "\n";
+        close($fh);
     }
 }
 
-sub showLog #FOLD00
-{
-    
-    my $f=shift;
-    
-    #my $Lf = $app->getForm('HTMLLog');
-    #
-    @tmp2 =  `tail -n $l /var/log/AAA.html | grep -e mac -e Auth`;
+sub showLog {
+    my $f = shift;
+    @tmp2 = `tail -n $l /var/log/AAA.html 2>/dev/null | grep -e mac -e Auth`;
 
-    #$cw = int(($app->maxyx)[1] ) - 2;
-    #$l = ($app->maxyx)[0] - 5;
-
-    
     $w = $app->getForm('Main')->getWidget('htmlLOG');
     $w->setField(
-                 CAPTION     => "Log entries: ".scalar(@tmp2),
-                 #             LINES       => 10,
-                 #COLUMNS     => 10,
-                 LISTITEMS   => [@tmp2],
-                );
-    #$app->execForm('HTMLLog');
-    #$app->delForm('HTMLLog');
-
+        CAPTION   => "Log entries: " . scalar(@tmp2),
+        LISTITEMS => [@tmp2],
+    );
 }
 
+sub showAAALog {
+    @tmp2 = `tail -n 200 /var/log/AAA/aaa_watch.log 2>/dev/null`;
 
-sub showAAALog #FOLD00
-{
-    
-    #my $f=shift;
-    
-    #my $Lf = $app->getForm('HTMLLog');
-    #
-    @tmp2 =  `tail -n 200 /var/log/AAA/aaa_watch.log `;
-
-    #$cw = int(($app->maxyx)[1] ) - 2;
-    #$l = ($app->maxyx)[0] - 5;
-
-    
     $w = $app->getForm('Main')->getWidget('aaaLOG');
     $w->setField(
-                 CAPTION     => "Log entries: ".scalar(@tmp2),
-                 #             LINES       => 10,
-                 #COLUMNS     => 10,
-                 LISTITEMS   => [@tmp2],
-                );
-
-    
-
-    #$app->execForm('HTMLLog');
-    #$app->delForm('HTMLLog');
-
+        CAPTION   => "Log entries: " . scalar(@tmp2),
+        LISTITEMS => [@tmp2],
+    );
 }
 
 sub detailsexit {
-    
-    
     my $f = shift;
     my $key = shift;
-    $selected=0;
+    $selected = 0;
 
     if ($key eq "\n") {
-
         if ($f->getWidget('Buttons')->getField('VALUE') == 0) {
             $app->delForm('Details');
-            my $w = $app->getForm('Main')->getWidget('lstAuth');
+            $w = $app->getForm('Main')->getWidget('lstAuth');
             $app->execute;
-        }
-        else
-        {
+        } else {
             $f->setField(DONTSWITCH => 1);
             updateList($w);
         }
     }
-    
-
-    
 }
 
 sub interfaceExit {
-    
     $app->delForm('Interfaces');
-    my $w = $app->getForm('Main')->getWidget('lstAuth');
+    $w = $app->getForm('Main')->getWidget('lstAuth');
     $app->execute;
-
-    
 }
 
 sub helpExit {
-    
     $app->delForm('Help');
-    $selected=0;
-    my $w = $app->getForm('Main')->getWidget('lstAuth');
+    $selected = 0;
+    $w = $app->getForm('Main')->getWidget('lstAuth');
     $app->execute;
 }
 
 
 sub editExit {
-    
     my $f = shift;
     my $key = shift;
     my @fields = qw(MAC RadReply FilterId REDIRECT Notes);
     my %rec;
 
-    if ($key eq "\n") {
+    return unless $key eq "\n";
 
-        if ($f->getWidget('Buttons')->getField('VALUE') == 1) {
-            $app->delForm('Edit');
-            my $w = $app->getForm('Main')->getWidget('lstAuth');
-            $app->execute;
-        }
-        elsif   ($f->getWidget('Buttons')->getField('VALUE') == 0) {
-            # Get the field values
-            foreach (@fields) { $rec{$_} = $f->getWidget($_)->getField('VALUE') };
-            # Make sure there's a first and last name
-            unless ($rec{RadReply} && $rec{FilterId}) {
-                dialog('Error!', BTN_OK, 'The Radreply & FilterId are required fields!',
-                       qw(white red yellow));
-                return;
-            }
-            else
-            {
-                if ((defined $rec{FilterId}) && ($rec{FilterId} =~ /^\d+\/\d+$/))
-                {
-                    if ((defined $rec{RadReply}) && ($rec{RadReply} =~ /^\d+\/.*$/))
-                    {
-                        $rec{RadReply}=$rec{RadReply}."/InfoScreen";
-                        if (
-                            (defined $Options::dbh_dbase) &&
-                            (defined $Options::dbh_host) &&
-                            (defined $Options::dbh_pass) &&
-                            (defined $Options::dbh_user)
-                           )
-
-                        {
-                            glob $main::dbh_hpna = DBI->connect("DBI:mysql:$Options::dbh_dbase:$Options::dbh_host", $Options::dbh_user, $Options::dbh_pass);
-                            my $msg=saveClientDevice($rec{MAC},$rec{FilterId},$rec{RadReply});
-                            if ($$msg =~/^OK/)
-                            {
-                                #dialog('Saved', BTN_OK, 'Saved new information!',
-                                #      qw(white red yellow));
-                                $app->delForm('Edit');
-                                my $w = $app->getForm('Main')->getWidget('lstAuth');
-                                $app->execute;
-                            }
-                            else
-                            {
-                                dialog('Saved', BTN_OK, 'Cannot Save information !'.$$msg,
-                                       qw(white red yellow));
-                                return;
-                            }
-                        }
-                        else
-                        {
-                            dialog('Saved', BTN_OK, 'Cannot Save information check db settings!',
-                                   qw(white red yellow));
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        dialog('Error!', BTN_OK, 'Reply-Message is not valid!',
-                               qw(white red yellow));
-                        return;
-
-                    }
-
-
-                }
-                else
-                {
-                    dialog('Error!', BTN_OK, 'FilterId is not valid!',
-                           qw(white red yellow));
-                    return;
-                    
-                }
-                
-            }
-         
-        }
-        else
-        {
-
-        }
-        
-        
+    if ($f->getWidget('Buttons')->getField('VALUE') == 1) {
+        $app->delForm('Edit');
+        $w = $app->getForm('Main')->getWidget('lstAuth');
+        $app->execute;
+        return;
     }
 
+    # Get field values
+    $rec{$_} = $f->getWidget($_)->getField('VALUE') for @fields;
 
-    
+    unless ($rec{RadReply} && $rec{FilterId}) {
+        dialog('Error!', BTN_OK, 'Reply-Message & Filter-Id are required!',
+               qw(white red yellow));
+        return;
+    }
+
+    unless ($rec{FilterId} =~ /^\d+\/\d+$/) {
+        dialog('Error!', BTN_OK, 'Filter-Id must be in format: upload/download (e.g. 1024/1024)',
+               qw(white red yellow));
+        return;
+    }
+
+    unless ($rec{RadReply} =~ /^\d+\/.*$/) {
+        dialog('Error!', BTN_OK, 'Reply-Message must start with client ID (e.g. 123/username)',
+               qw(white red yellow));
+        return;
+    }
+
+    $rec{RadReply} .= "/InfoScreen";
+
+    unless ($Options::dbh_dbase && $Options::dbh_host && $Options::dbh_pass && $Options::dbh_user) {
+        dialog('Error!', BTN_OK, 'Database settings not configured!',
+               qw(white red yellow));
+        return;
+    }
+
+    our $main::dbh_hpna = DBI->connect(
+        "DBI:mysql:$Options::dbh_dbase:$Options::dbh_host",
+        $Options::dbh_user, $Options::dbh_pass
+    );
+    my $msg = saveClientDevice($rec{MAC}, $rec{FilterId}, $rec{RadReply});
+
+    if ($$msg =~ /^OK/) {
+        $app->delForm('Edit');
+        $w = $app->getForm('Main')->getWidget('lstAuth');
+        $app->execute;
+    } else {
+        dialog('Error!', BTN_OK, "Save failed: $$msg", qw(white red yellow));
+    }
 }
 
 
 
 sub searchExit {
-    
     my $f = shift;
     my $key = shift;
-    my @fields = qw(SearchStr SiteStr);
     my %rec;
 
-    if ($key eq "\n") {
+    return unless $key eq "\n";
 
-        if ($f->getWidget('Buttons')->getField('VALUE') == 1) {
-            $app->delForm('Search');
-            my $w = $app->getForm('Main')->getWidget('lstConn');
-            $app->execute;
-        }
-        elsif   ($f->getWidget('Buttons')->getField('VALUE') == 0) {
-            # Get the field values
-            foreach (@fields) { $rec{$_} = $f->getWidget($_)->getField('VALUE') };
-            if ( (defined $rec{SearchStr}) && ($rec{SearchStr} ne ''))
-            {
-                $app->delForm('Search');
-                my $w = $app->getForm('Main')->getWidget('lstConn');
-                $database=0;
-                my $ref_tmp =  loaddir($current_order,$rec{SearchStr},1,$database);
-                if ($ref_tmp ne -1)
-                {
-                    @tmp2=@$ref_tmp;
-                }
-                $view="$rec{SearchStr}";
-                $w->setField(
-                             CAPTION     => "$rec{SearchStr} Found: ".scalar(@tmp2)." ".$main::users_string,
-                             LISTITEMS   => [@tmp2],
-                            );
-                $app->execute;
-            }
-            elsif ( (defined $rec{SiteStr}) && ($rec{SiteStr} ne ''))
-            {
-                $app->delForm('Search');
-                my $w = $app->getForm('Main')->getWidget('lstConn');
-                $database=1;
-                my $ref_tmp =  loaddir($current_order,$rec{SiteStr},1,$database);
-                if ($ref_tmp ne -1)
-                {
-                    @tmp2=@$ref_tmp;
-                }
-                $view="$rec{SiteStr}";
-                $w->setField(
-                             CAPTION     => "Found: ".scalar(@tmp2)." ".$main::users_string,
-                             LISTITEMS   => [@tmp2],
-                            );
-                $app->execute;
-            }
-            else
-            {
-                dialog('Error!', BTN_OK, 'Search string or siteid required!',
-                       qw(white red yellow));
-                return;
-            }
-        }
+    if ($f->getWidget('Buttons')->getField('VALUE') == 1) {
+        $app->delForm('Search');
+        $w = $app->getForm('Main')->getWidget('lstConn');
+        $app->execute;
+        return;
     }
+
+    $rec{SearchStr} = $f->getWidget('SearchStr')->getField('VALUE');
+    $rec{SiteStr}   = $f->getWidget('SiteStr')->getField('VALUE');
+
+    my $search_term;
+    my $search_db = 0;
+
+    if (defined $rec{SearchStr} && $rec{SearchStr} ne '') {
+        $search_term = $rec{SearchStr};
+        $search_db = 0;
+    } elsif (defined $rec{SiteStr} && $rec{SiteStr} ne '') {
+        $search_term = $rec{SiteStr};
+        $search_db = 1;
+    } else {
+        dialog('Error!', BTN_OK, 'Search string or Site-ID required!',
+               qw(white red yellow));
+        return;
+    }
+
+    $app->delForm('Search');
+    $w = $app->getForm('Main')->getWidget('lstConn');
+    $database = $search_db;
+    my $ref_tmp = loaddir($current_order, $search_term, 1, $database);
+    @tmp2 = @$ref_tmp if ref $ref_tmp eq 'ARRAY';
+    $view = $search_term;
+    $w->setField(
+        CAPTION   => "$search_term Found: " . scalar(@tmp2) . " $main::users_string",
+        LISTITEMS => [@tmp2],
+    );
+    $app->execute;
 }
 
 
 sub blacklistExit {
-    
     my $f = shift;
     my $key = shift;
     my @fields = qw(REASON Notes MAC StartTime ClearInfo ClientId);
     my %rec;
 
-    if ($key eq "\n") {
+    return unless $key eq "\n";
 
-        if ($f->getWidget('Buttons')->getField('VALUE') == 1) {
-            $app->delForm('Blacklist');
-            my $w = $app->getForm('Main')->getWidget('lstAuth');
-            $app->execute;
-        }
-        elsif   ($f->getWidget('Buttons')->getField('VALUE') == 0) {
-            foreach (@fields) { $rec{$_} = $f->getWidget($_)->getField('VALUE') };
-            # Make sure there's a first and last name
-            unless ($rec{REASON} && $rec{Notes}) {
-                dialog('Error!', BTN_OK, 'The Reason & Notes are required fields!',
-                       qw(white red yellow));
-                return;
-            }
-                else
-                {
-                if ( (
-                      (defined $Options::dbh_dbase) &&
-                      (defined $Options::dbh_host) &&
-                      (defined $Options::dbh_pass) &&
-                      (defined $Options::dbh_user)
-                     ) &&
-                     (
-                      (defined $Options::ptc_dbase) &&
-                      (defined $Options::ptc_host) &&
-                      (defined $Options::ptc_pass) &&
-                      (defined $Options::ptc_user)
-                     ) )
-                {
-                    glob $main::dbh_hpna = DBI->connect("DBI:mysql:$Options::dbh_dbase:$Options::dbh_host", $Options::dbh_user, $Options::dbh_pass);
-                    glob $main::dbh_ptc = DBI->connect("DBI:mysql:$Options::ptc_dbase:$Options::ptc_host", $Options::ptc_user, $Options::ptc_pass);
-
-                    if ($rec{StartTime})
-                    {
-                        
-                        $rv = dialog('Clear Blacklist?', BTN_YES | BTN_NO,
-                                     'Are you sure you want to clear ?', qw(white red yellow));
-                        if ($rv)
-                        {
-                        }
-                        else
-                        {
-                            unless ($rec{REASON} && $rec{Notes} && $rec{ClearInfo}) {
-                                dialog('Error!', BTN_OK, 'The Reason & Notes  & Clear Info are required fields!',
-                                       qw(white red yellow));
-                                return;
-                            }
-
-                            closeBlackListDB($rec{MAC},$rec{REASON},$rec{StartTime},$rec{ClearInfo});
-                            $app->delForm('Blacklist');
-                            my $w = $app->getForm('Main')->getWidget('lstAuth');
-                            $app->execute;
-                            $selected=0;
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        my $msg=addBlackListDB($rec{MAC},$rec{REASON},$rec{Notes},$main::region,$rec{ClientId});
-                        if ($msg eq 1)
-                        {
-                            dialog('Added', BTN_OK, 'Added '.$rec{ClientId}."/".$rec{MAC}.' to blacklist!',
-                            qw(white red yellow));
-                            my $ptc_home = get_config()->{home};
-                            open(CLEARLIST,">>$ptc_home/tmp/clearList");
-                            print CLEARLIST "CLEARING:N/A:$rec{MAC}:N/A:::\n";
-                            close(CLEARLIST);
-                            
-                            $app->delForm('Blacklist');
-                            my $w = $app->getForm('Main')->getWidget('lstAuth');
-                            $app->execute;
-                            $selected=0;
-                            return;
-                        }
-                        else
-                        {
-
-                            dialog('Failed', BTN_OK, 'Cannot Save information !'.$$msg,
-                                   qw(white red yellow));
-                            return;
-                        }
-                    }
-                }
-                else
-                {
-                    dialog('Failed', BTN_OK, 'Cannot Save information check db settings!',
-                           qw(white red yellow));
-                    return;
-                }
-
-            }
-        }
-
-    }
-    else
-    {
-
+    if ($f->getWidget('Buttons')->getField('VALUE') == 1) {
+        $app->delForm('Blacklist');
+        $w = $app->getForm('Main')->getWidget('lstAuth');
+        $app->execute;
+        return;
     }
 
+    $rec{$_} = $f->getWidget($_)->getField('VALUE') for @fields;
 
+    unless ($rec{REASON} && $rec{Notes}) {
+        dialog('Error!', BTN_OK, 'Reason & Notes are required!', qw(white red yellow));
+        return;
+    }
+
+    unless ($Options::dbh_dbase && $Options::dbh_host && $Options::dbh_pass && $Options::dbh_user &&
+            $Options::ptc_dbase && $Options::ptc_host && $Options::ptc_pass && $Options::ptc_user) {
+        dialog('Error!', BTN_OK, 'Database settings not configured!', qw(white red yellow));
+        return;
+    }
+
+    our $main::dbh_hpna = DBI->connect("DBI:mysql:$Options::dbh_dbase:$Options::dbh_host",
+                                        $Options::dbh_user, $Options::dbh_pass);
+    our $main::dbh_ptc = DBI->connect("DBI:mysql:$Options::ptc_dbase:$Options::ptc_host",
+                                       $Options::ptc_user, $Options::ptc_pass);
+
+    if ($rec{StartTime}) {
+        # Clear existing blacklist entry
+        $rv = dialog('Clear Blacklist?', BTN_YES | BTN_NO,
+                     'Are you sure you want to clear?', qw(white red yellow));
+        return if $rv;
+
+        unless ($rec{REASON} && $rec{Notes} && $rec{ClearInfo}) {
+            dialog('Error!', BTN_OK, 'Reason, Notes & Clear Info are required!',
+                   qw(white red yellow));
+            return;
+        }
+
+        closeBlackListDB($rec{MAC}, $rec{REASON}, $rec{StartTime}, $rec{ClearInfo});
+    } else {
+        # Add new blacklist entry
+        my $msg = addBlackListDB($rec{MAC}, $rec{REASON}, $rec{Notes}, $main::region, $rec{ClientId});
+
+        if ($msg eq 1) {
+            dialog('Added', BTN_OK, "Added $rec{ClientId}/$rec{MAC} to blacklist!",
+                   qw(white red yellow));
+            my $ptc_home = get_config()->{home};
+            open(my $fh, '>>', "$ptc_home/tmp/clearList");
+            print $fh "CLEARING:N/A:$rec{MAC}:N/A:::\n";
+            close($fh);
+        } else {
+            dialog('Error!', BTN_OK, "Failed: $$msg", qw(white red yellow));
+            return;
+        }
+    }
+
+    $app->delForm('Blacklist');
+    $w = $app->getForm('Main')->getWidget('lstAuth');
+    $app->execute;
+    $selected = 0;
 }
 
 
-sub arping_stats #FOLD00
-{
-    my ($clientid,$device,$ip,$mac)=@_;
-    my $arping="/usr/bin/arping";
-    if ( $opts{'s'} && $opts{'a'})
-    {
-        my $total=0;
-        my $count=0;
-        my $pl=0;
-        if (-e $arping)
-        {
-            #print "FOUND ARPING EXECUTABLE\n";
-            if ($device =~ /eth.*/)
-            {
-                print "Checking $ip in $device with mac $mac\n" if ($debug > 0);
-                my @results=`$arping -I $device $ip -w 100000 -c 5 `;
-                foreach (@results)
-                {
-                    #print $_;
-                    if (m#.*,\s+(\d+)\%\s+unanswered#)
-                    {
-                        $pl=$1;
-                        #print $_."\n";
-                    }
-                    elsif(m#time=(\d+\.\d+)#)
-                    {
-                        $total=$total+$1;
-                        $count++;
-                        #print "$1\n";
-                    }
-                }
-            }
-            else
-            {
-                print "DEVICE : $device NOT FOUND\n" ;#if ($debug > 0);
-                
-            }
-            if ($count ne 0)
-            {
-                $mac=~s/\://g;
-                my $info = virtual RRD::Info($clientid."-$mac","Checking $clientid $ip in $device with mac $mac","arpingStats");
-                my $current_time = gettimeofday() if $opts{p};
-                $info->CheckPathsVirtual($1);
-                print "UPDATING $clientid ".($total/$count)." PL : ".$pl."\n" if ($debug > 0);
-                $info->{Function}->Update(($total/$count),$pl);
-                if ($opts{g})
-                {
-                    $info->{Function}->Graph($clientid."-arp-1hour",-7200);
-                    $info->{Function}->Graph($clientid."-arp-1day",-86400);
-                    $info->{Function}->Graph($clientid."-arp-1week",-604800);
-                    $info->{Function}->Graph($clientid."-arp-8weeks",-4838400);
-                    $info->{Function}->Graph($clientid."-arp-2years",-63072000);
-                }
-                my $diff = gettimeofday() - $current_time if $opts{p};;
-                printf ("%.3f \n",$diff) if $opts{p};
-                if ($opts{p})
-                {
-                    my $r = $info->{Function}->{LastRead};
-                    if ( defined $r ) {
-                        print "Results from the update: ";
-                        print $info->{Function}->{LastRead};
-                        print "\nDone in $diff\n";
-                    }else{
-                        print "No results were found, recheck your config!\n";
-                        print "Done, with errors\n";
-                    }
-                }
-            }
-            else
-            {
-                #   print "AVG : 0 PL : ".$pl."\n";
-            }
-        }
-        else
-        {
-            print "NO ARPING EXECUTABLE FOUND\n";
-            exit;
+sub arping_stats {
+    my ($clientid, $device, $ip, $mac) = @_;
+    my $arping = "/usr/bin/arping";
 
+    return unless $opts{'s'} && $opts{'a'};
+    return unless -e $arping;
+    return unless $device =~ /eth/;
+
+    print "Checking $ip on $device (MAC: $mac)\n" if $debug > 0;
+
+    my ($total, $count, $pl) = (0, 0, 0);
+    my @results = `$arping -I $device $ip -w 100000 -c 5 2>/dev/null`;
+
+    for (@results) {
+        if (/.*,\s+(\d+)\%\s+unanswered/) {
+            $pl = $1;
+        } elsif (/time=(\d+\.\d+)/) {
+            $total += $1;
+            $count++;
         }
     }
-    
+
+    return unless $count > 0;
+
+    (my $mac_clean = $mac) =~ s/://g;
+    my $avg = $total / $count;
+    print "UPDATING $clientid avg=${avg}s PL=${pl}%\n" if $debug > 0;
+
+    eval {
+        my $info = virtual RRD::Info("$clientid-$mac_clean",
+            "Checking $clientid $ip on $device", "arpingStats");
+        my $current_time = gettimeofday() if $opts{p};
+        $info->CheckPathsVirtual($1);
+        $info->{Function}->Update($avg, $pl);
+
+        if ($opts{g}) {
+            for my $period (['1hour', -7200], ['1day', -86400], ['1week', -604800],
+                            ['8weeks', -4838400], ['2years', -63072000]) {
+                $info->{Function}->Graph("$clientid-arp-$period->[0]", $period->[1]);
+            }
+        }
+
+        if ($opts{p}) {
+            my $diff = gettimeofday() - $current_time;
+            printf "%.3f arping\n", $diff;
+        }
+    };
+    warn "RRD error: $@" if $@ && $debug > 0;
 }
 
 
 
 
-sub logexit { #FOLD00
-
+sub logexit {
     my $f = shift;
     my $key = shift;
-    my $w = $f->getWidget('htmlLOG');
+    $w = $f->getWidget('htmlLOG');
 
-    if ((lc($key) eq "h") || (lc($key) eq "u"))
-    {
+    if (lc($key) eq "h" || lc($key) eq "u") {
         $f->setField(DONTSWITCH => 1);
         showLog($w);
     }
@@ -1172,380 +791,363 @@ sub logexit { #FOLD00
 __DATA__
 
 %forms = (
-  MainFrm     => {
-      TABORDER        => [qw(Menu lstConn)],
-      FOCUSED         => 'lstConn',
-      WIDGETS         => {
-          Menu            => {
-              TYPE            => 'Menu',
-              MENUS           => {
-                  MENUORDER       => [qw(File)],
+  MainFrm => {
+      TABORDER => [qw(Menu lstConn)],
+      FOCUSED  => 'lstConn',
+      WIDGETS  => {
+          Menu => {
+              TYPE  => 'Menu',
+              MENUS => {
+                  MENUORDER => [qw(File)],
               },
           },
-          lstConn       => {
-              TYPE            => 'ListBox::MultiColumn',
-              COLUMNS         => 6,
-              LINES           => 10,
-              Y               => 1,
-              X               => 0,
-              CAPTION         => 'Connected',
-              MULTISEL        => 1,
-              SELECTEDCOL     => 'red',
-              HEADERS         => [qw(Status IP MAC Speed Username To-User From-User Total)],
-              COLWIDTHS       => [12,17,17,12,38,12,12,12],
-              HEADERFGCOL     => 'white',
-              HEADERBGCOL     => 'cyan',
-              BIGHEADER       => 1,
-              FOCUSSWITCH     => "\n\srtuhecmqxoa?",
-              CWD             => '',
-              OnExit          => \&main::srcexit,
+          lstConn => {
+              TYPE        => 'ListBox::MultiColumn',
+              COLUMNS     => 8,
+              LINES       => 10,
+              Y           => 1,
+              X           => 0,
+              CAPTION     => 'Connected',
+              MULTISEL    => 1,
+              SELECTEDCOL => 'red',
+              HEADERS     => [qw(Status IP MAC Speed User In-Class Out-Class Port)],
+              COLWIDTHS   => [10, 16, 18, 12, 24, 10, 10, 8],
+              HEADERFGCOL => 'white',
+              HEADERBGCOL => 'cyan',
+              BIGHEADER   => 1,
+              FOCUSSWITCH => "\n\srtuhecmqxoa?",
+              CWD         => '',
+              OnExit      => \&main::srcexit,
           },
-         
-
       },
-
   },
 
-  HelpFrm   => {
-      DERIVED         => 0,
-      FOREGROUND      => 'yellow',
-      BACKGROUND      => 'blue',
-      AUTOCENTER      => 1,
-      BORDER          => 1,
-      LINES           => 24,
-      COLUMNS         => 80,
-      CAPTION         => 'Keyboard help',
-      TABORDER        => [qw(HELPTEXT)],
-      FOCUSED         => 'HELPTEXT',
-      WIDGETS         => {
-          HELPTEXT           => {
-              TYPE            => 'TextField',
-              Y               => 1,
-              X               => 1,
-              COLUMNS         => 75,
-              LINES           => 20,
-              READONLY        => 1,
-              FOCUSSWITCH     => "\nq",
-              OnExit          => \&main::helpExit,
-
+  HelpFrm => {
+      DERIVED    => 0,
+      FOREGROUND => 'yellow',
+      BACKGROUND => 'blue',
+      AUTOCENTER => 1,
+      BORDER     => 1,
+      LINES      => 18,
+      COLUMNS    => 50,
+      CAPTION    => 'Keyboard Shortcuts',
+      TABORDER   => [qw(HELPTEXT)],
+      FOCUSED    => 'HELPTEXT',
+      WIDGETS    => {
+          HELPTEXT => {
+              TYPE        => 'TextField',
+              Y           => 1,
+              X           => 1,
+              COLUMNS     => 46,
+              LINES       => 15,
+              READONLY    => 1,
+              FOCUSSWITCH => "\nq",
+              OnExit      => \&main::helpExit,
           }
       },
   },
-  DetailsFrm   => {
-      DERIVED         => 0,
-      FOREGROUND      => 'white',
-      BACKGROUND      => 'blue',
-      AUTOCENTER      => 1,
-      BORDER          => 1,
-      LINES           => 24,
-      COLUMNS         => 80,
-      CAPTION         => 'Detailed Information',
-      TABORDER        => [qw(Buttons)],
-      FOCUSED         => 'IP',
-    
-      WIDGETS         => {
-          Buttons         => {
-              TYPE            => 'ButtonSet',
-              Y               => 21,
-              X               => 11,
-              LABELS          => [qw(OK Update)],
-              OnExit          => \&main::detailsexit,
+  DetailsFrm => {
+      DERIVED    => 0,
+      FOREGROUND => 'white',
+      BACKGROUND => 'blue',
+      AUTOCENTER => 1,
+      BORDER     => 1,
+      LINES      => 22,
+      COLUMNS    => 78,
+      CAPTION    => 'Client Details',
+      TABORDER   => [qw(Buttons)],
+      FOCUSED    => 'IP',
+      WIDGETS    => {
+          Buttons => {
+              TYPE   => 'ButtonSet',
+              Y      => 19,
+              X      => 11,
+              LABELS => [qw(OK Update)],
+              OnExit => \&main::detailsexit,
           },
-          IP           => {
-              TYPE            => 'TextField',
-              Y               => 0,
-              X               => 1,
-              CAPTION         => 'IP-Address',
-              CAPTIONCOL      => 'yellow',
-              READONLY        => 1,
-              COLUMNS         => 20,
+          IP => {
+              TYPE     => 'TextField',
+              Y        => 0,
+              X        => 1,
+              CAPTION  => 'IP Address',
+              CAPTIONCOL => 'yellow',
+              READONLY => 1,
+              COLUMNS  => 18,
           },
-          MAC            => {
-              TYPE            => 'TextField',
-              Y               => 0,
-              X               => 23,
-              CAPTION         => 'MAC-Address',
-              READONLY        => 1,
-              COLUMNS         => 20,
+          MAC => {
+              TYPE     => 'TextField',
+              Y        => 0,
+              X        => 22,
+              CAPTION  => 'MAC Address',
+              READONLY => 1,
+              COLUMNS  => 18,
           },
-          REDIRECT        => {
-              TYPE            => 'TextField',
-              Y               => 3,
-              X               => 1,
-              CAPTION         => 'Redirected',
-              COLUMNS         => 42,
-              READONLY        => 1,
+          REDIRECT => {
+              TYPE     => 'TextField',
+              Y        => 2,
+              X        => 1,
+              CAPTION  => 'Redirected',
+              COLUMNS  => 20,
+              READONLY => 1,
           },
-          CLIENT            => {
-              TYPE            => 'TextField',
-              Y               => 6,
-              X               => 1,
-              CAPTION         => 'Client INFO',
-              COLUMNS         => 42,
-              READONLY        => 1,
+          CLIENT => {
+              TYPE     => 'TextField',
+              Y        => 4,
+              X        => 1,
+              CAPTION  => 'Client',
+              COLUMNS  => 40,
+              READONLY => 1,
           },
-          SPEED           => {
-              TYPE            => 'TextField',
-              Y               => 9,
-              X               => 1,
-              CAPTION         => 'Speed',
-              COLUMNS         => 20,
-              READONLY        => 1,
+          SPEED => {
+              TYPE     => 'TextField',
+              Y        => 6,
+              X        => 1,
+              CAPTION  => 'Speed (Down/Up)',
+              COLUMNS  => 18,
+              READONLY => 1,
           },
-          INCLASS           => {
-              TYPE            => 'TextField',
-              Y               => 9,
-              X               => 23,
-              CAPTION         => 'IN-Class',
-              COLUMNS         => 9,
-              READONLY        => 1,
+          INCLASS => {
+              TYPE     => 'TextField',
+              Y        => 6,
+              X        => 22,
+              CAPTION  => 'In Class',
+              COLUMNS  => 8,
+              READONLY => 1,
           },
-          OUTCLASS           => {
-              TYPE            => 'TextField',
-              Y               => 9,
-              X               => 34,
-              CAPTION         => 'OUT-Class',
-              COLUMNS         => 9,
-              READONLY        => 1,
+          OUTCLASS => {
+              TYPE     => 'TextField',
+              Y        => 6,
+              X        => 33,
+              CAPTION  => 'Out Class',
+              COLUMNS  => 8,
+              READONLY => 1,
           },
-          STATUS           => {
-              TYPE            => 'TextField',
-              Y               => 12,
-              X               => 1,
-              CAPTION         => 'Status',
-              COLUMNS         => 42,
-              READONLY        => 1,
+          STATUS => {
+              TYPE     => 'TextField',
+              Y        => 8,
+              X        => 1,
+              CAPTION  => 'Status',
+              COLUMNS  => 40,
+              READONLY => 1,
           },
-          INTRAFFIC           => {
-              TYPE            => 'TextField',
-              Y               => 15,
-              X               => 1,
-              CAPTION         => 'INPUT STATS',
-              COLUMNS         => 42,
-              READONLY        => 1,
+          INTRAFFIC => {
+              TYPE     => 'TextField',
+              Y        => 10,
+              X        => 1,
+              CAPTION  => 'Input Traffic',
+              COLUMNS  => 40,
+              READONLY => 1,
           },
-          OUTTRAFFIC           => {
-              TYPE            => 'TextField',
-              Y               => 18,
-              X               => 1,
-              CAPTION         => 'OUTPUT STATS',
-              COLUMNS         => 42,
-              READONLY        => 1,
+          OUTTRAFFIC => {
+              TYPE     => 'TextField',
+              Y        => 12,
+              X        => 1,
+              CAPTION  => 'Output Traffic',
+              COLUMNS  => 40,
+              READONLY => 1,
           },
-          INFO           => {
-              TYPE            => 'TextMemo',
-              Y               => 0,
-              X               => 45,
-              CAPTION         => 'EXTRA INFORMATION',
-              COLUMNS         => 33,
-              LINES           => 19,
-              READONLY        => 1,
-          }
-
+          INFO => {
+              TYPE     => 'TextMemo',
+              Y        => 0,
+              X        => 43,
+              CAPTION  => 'Vendor Info',
+              COLUMNS  => 32,
+              LINES    => 17,
+              READONLY => 1,
+          },
       },
   },
-  EditFrm   => {
-      DERIVED         => 0,
-      FOREGROUND      => 'white',
-      BACKGROUND      => 'blue',
-      AUTOCENTER      => 1,
-      BORDER          => 1,
-      LINES           => 24,
-      COLUMNS         => 80,
-      CAPTION         => 'Edit Information',
-      TABORDER        => [qw(Buttons RadReply FilterId REDIRECT Notes)],
-      FOCUSED         => 'RadReply',
-    
-      WIDGETS         => {
-          Buttons         => {
-              TYPE            => 'ButtonSet',
-              Y               => 21,
-              X               => 11,
-              LABELS          => [qw(OK Cancel)],
-              OnExit          => \&main::editExit,
+  EditFrm => {
+      DERIVED    => 0,
+      FOREGROUND => 'white',
+      BACKGROUND => 'blue',
+      AUTOCENTER => 1,
+      BORDER     => 1,
+      LINES      => 18,
+      COLUMNS    => 60,
+      CAPTION    => 'Edit Client',
+      TABORDER   => [qw(Buttons RadReply FilterId REDIRECT Notes)],
+      FOCUSED    => 'RadReply',
+      WIDGETS    => {
+          Buttons => {
+              TYPE   => 'ButtonSet',
+              Y      => 15,
+              X      => 11,
+              LABELS => [qw(Save Cancel)],
+              OnExit => \&main::editExit,
           },
-          MAC            => {
-              TYPE            => 'TextField',
-              Y               => 0,
-              X               => 1,
-              CAPTION         => 'MAC-Address',
-              COLUMNS         => 42,
-              READONLY        => 1
+          MAC => {
+              TYPE     => 'TextField',
+              Y        => 0,
+              X        => 1,
+              CAPTION  => 'MAC Address',
+              COLUMNS  => 42,
+              READONLY => 1,
           },
-
-          RadReply           => {
-              TYPE            => 'TextField',
-              Y               => 3,
-              X               => 1,
-              CAPTION         => 'Reply-Message',
-              CAPTIONCOL      => 'yellow',
-              COLUMNS         => 42,
+          RadReply => {
+              TYPE      => 'TextField',
+              Y         => 2,
+              X         => 1,
+              CAPTION   => 'Reply-Message (ID/username)',
+              CAPTIONCOL => 'yellow',
+              COLUMNS   => 42,
           },
-          FilterId            => {
-              TYPE            => 'TextField',
-              Y               => 6,
-              X               => 1,
-              CAPTION         => 'Filter-Id',
-              COLUMNS         => 42,
+          FilterId => {
+              TYPE    => 'TextField',
+              Y       => 4,
+              X       => 1,
+              CAPTION => 'Filter-Id (down/up kbps)',
+              COLUMNS => 42,
           },
-          REDIRECT        => {
-              TYPE            => 'TextField',
-              Y               => 9,
-              X               => 1,
-              CAPTION         => 'Redirect to',
-              COLUMNS         => 42,
+          REDIRECT => {
+              TYPE    => 'TextField',
+              Y       => 6,
+              X       => 1,
+              CAPTION => 'Redirect to',
+              COLUMNS => 42,
           },
-          Notes            => {
-              TYPE            => 'TextField',
-              Y               => 12,
-              X               => 1,
-              LINES           => 5,
-              CAPTION         => 'Client INFO',
-              COLUMNS         => 42,
+          Notes => {
+              TYPE    => 'TextField',
+              Y       => 8,
+              X       => 1,
+              LINES   => 5,
+              CAPTION => 'Notes',
+              COLUMNS => 42,
           },
       },
   },
   
-    SearchFrm   => {
-      DERIVED         => 0,
-      FOREGROUND      => 'white',
-      BACKGROUND      => 'blue',
-      AUTOCENTER      => 1,
-      BORDER          => 1,
-      LINES           => 12,
-      COLUMNS         => 46,
-      CAPTION         => 'Search',
-      TABORDER        => [qw(SearchStr SiteStr Buttons)],
-      FOCUSED         => 'SearchStr',
-    
-      WIDGETS         => {
-          Buttons         => {
-              TYPE            => 'ButtonSet',
-              Y               => 7,
-              X               => 11,
-              LABELS          => [qw(OK Cancel)],
-              OnExit          => \&main::searchExit,
+  SearchFrm => {
+      DERIVED    => 0,
+      FOREGROUND => 'white',
+      BACKGROUND => 'blue',
+      AUTOCENTER => 1,
+      BORDER     => 1,
+      LINES      => 10,
+      COLUMNS    => 50,
+      CAPTION    => 'Search',
+      TABORDER   => [qw(SearchStr SiteStr Buttons)],
+      FOCUSED    => 'SearchStr',
+      WIDGETS    => {
+          Buttons => {
+              TYPE   => 'ButtonSet',
+              Y      => 7,
+              X      => 11,
+              LABELS => [qw(Search Cancel)],
+              OnExit => \&main::searchExit,
           },
-          SearchStr            => {
-              TYPE            => 'TextField',
-              Y               => 0,
-              X               => 1,
-              CAPTION         => 'Search for',
-              COLUMNS         => 42,
+          SearchStr => {
+              TYPE    => 'TextField',
+              Y       => 1,
+              X       => 1,
+              CAPTION => 'Search (IP/MAC/User)',
+              COLUMNS => 42,
           },
-          SiteStr            => {
-              TYPE            => 'TextField',
-              Y               => 4,
-              X               => 1,
-              CAPTION         => 'Site-ID',
-              COLUMNS         => 42,
-          },
-      },
-  },
-
-  BlackListFrm   => {
-      DERIVED         => 0,
-      FOREGROUND      => 'white',
-      BACKGROUND      => 'blue',
-      AUTOCENTER      => 1,
-      BORDER          => 1,
-      LINES           => 24,
-      COLUMNS         => 80,
-      CAPTION         => 'BLACKLIST',
-      TABORDER        => [qw(REASON Notes ClearInfo Buttons)],
-      FOCUSED         => 'REASON',
-    
-      WIDGETS         => {
-          Buttons         => {
-              TYPE            => 'ButtonSet',
-              Y               => 21,
-              X               => 11,
-              LABELS          => [qw(Add Cancel)],
-              OnExit          => \&main::blacklistExit,
-          },
-          MAC            => {
-              TYPE            => 'TextField',
-              Y               => 0,
-              X               => 1,
-              CAPTION         => 'MAC-Address',
-              COLUMNS         => 42,
-              READONLY        => 1
-          },
-          
-          StartTime            => {
-              TYPE            => 'TextField',
-              Y               => 3,
-              X               => 1,
-              CAPTION         => 'Added',
-              COLUMNS         => 42,
-              READONLY        => 1
-          },
-          
-
-          REASON            => {
-              TYPE            => 'ComboBox',
-              Y               => 6,
-              X               => 1,
-              LISTITEMS        => [@PTC::NetUtils::REASONS],
-              CAPTION         => 'Reason',
-              COLUMNS         => 40,
-              READONLY        => 1
-          },
-          Notes            => {
-              TYPE            => 'TextMemo',
-              Y               => 9,
-              FOCUSSWITCH     => "\t",
-              X               => 1,
-              LINES           => 2,
-              CAPTION         => 'Notes',
-              COLUMNS         => 42,
-          },
-          ClearInfo            => {
-              TYPE            => 'TextMemo',
-              Y               => 13,
-              FOCUSSWITCH     => "\t",
-              X               => 1,
-              LINES           => 3,
-              CAPTION         => 'Clear Info',
-              COLUMNS         => 42,
-          },
-          ClientId    => {
-              TYPE            => 'TextField',
-              Y               => 18,
-              FOCUSSWITCH     => "\t",
-              X               => 1,
-              LINES           => 1,
-              CAPTION         => 'ClientId',
-              COLUMNS         => 42,
-              READONLY        => 1
+          SiteStr => {
+              TYPE    => 'TextField',
+              Y       => 4,
+              X       => 1,
+              CAPTION => 'Site-ID',
+              COLUMNS => 42,
           },
       },
   },
 
-  InterfaceDetailFrm  => {
-      WIDGETS         => {
+  BlackListFrm => {
+      DERIVED    => 0,
+      FOREGROUND => 'white',
+      BACKGROUND => 'blue',
+      AUTOCENTER => 1,
+      BORDER     => 1,
+      LINES      => 20,
+      COLUMNS    => 60,
+      CAPTION    => 'Blacklist Management',
+      TABORDER   => [qw(REASON Notes ClearInfo Buttons)],
+      FOCUSED    => 'REASON',
+      WIDGETS    => {
+          Buttons => {
+              TYPE   => 'ButtonSet',
+              Y      => 17,
+              X      => 11,
+              LABELS => [qw(Add Cancel)],
+              OnExit => \&main::blacklistExit,
+          },
+          MAC => {
+              TYPE     => 'TextField',
+              Y        => 0,
+              X        => 1,
+              CAPTION  => 'MAC Address',
+              COLUMNS  => 42,
+              READONLY => 1,
+          },
+          StartTime => {
+              TYPE     => 'TextField',
+              Y        => 2,
+              X        => 1,
+              CAPTION  => 'Added',
+              COLUMNS  => 42,
+              READONLY => 1,
+          },
+          REASON => {
+              TYPE     => 'ComboBox',
+              Y        => 4,
+              X        => 1,
+              LISTITEMS => [@PTC::NetUtils::REASONS],
+              CAPTION  => 'Reason',
+              COLUMNS  => 40,
+              READONLY => 1,
+          },
+          Notes => {
+              TYPE        => 'TextMemo',
+              Y           => 6,
+              FOCUSSWITCH => "\t",
+              X           => 1,
+              LINES       => 2,
+              CAPTION     => 'Notes',
+              COLUMNS     => 42,
+          },
+          ClearInfo => {
+              TYPE        => 'TextMemo',
+              Y           => 10,
+              FOCUSSWITCH => "\t",
+              X           => 1,
+              LINES       => 3,
+              CAPTION     => 'Clear Info',
+              COLUMNS     => 42,
+          },
+          ClientId => {
+              TYPE     => 'TextField',
+              Y        => 14,
+              X        => 1,
+              CAPTION  => 'Client ID',
+              COLUMNS  => 42,
+              READONLY => 1,
+          },
+      },
+  },
+
+  InterfaceDetailFrm => {
+      WIDGETS => {
           IntList => {
-
-              TYPE            => 'ListBox::MultiColumn',
-              COLUMNS         => 3,
-              LINES           => 20,
-              Y               => 1,
-              X               => 1,
-              CAPTION         => 'Interface Stats',
-              MULTISEL        => 0,
-              SELECTEDCOL     => 'red',
-              HEADERS         => [qw(Name IN OUT)],
-              COLWIDTHS       => [20,20,20],
-              HEADERFGCOL     => 'white',
-              HEADERBGCOL     => 'cyan',
-              BIGHEADER       => 1,
-              FOCUSSWITCH     => "\n\tuha",
-              CWD             => '',
-              OnExit          => \&main::interfaceExit,
-          }
-      }
+              TYPE        => 'ListBox::MultiColumn',
+              COLUMNS     => 3,
+              LINES       => 20,
+              Y           => 1,
+              X           => 1,
+              CAPTION     => 'Interface Stats',
+              MULTISEL    => 0,
+              SELECTEDCOL => 'red',
+              HEADERS     => [qw(Name In Out)],
+              COLWIDTHS   => [20, 20, 20],
+              HEADERFGCOL => 'white',
+              HEADERBGCOL => 'cyan',
+              BIGHEADER   => 1,
+              FOCUSSWITCH => "\n\tuha",
+              CWD         => '',
+              OnExit      => \&main::interfaceExit,
+          },
+      },
   },
-
 
 );
 

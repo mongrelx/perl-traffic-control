@@ -131,7 +131,7 @@ sub saveClientDevice
     $mac=lc($mac);
     if ($mac !~m#(..\:..\:..\:..\:..\:..)#)
     {
-        my $error_str="Laitteisto-osoite ei kelpaa : $mac";
+        my $error_str="Invalid MAC address: $mac";
         return \$error_str;
     }
 
@@ -140,7 +140,7 @@ sub saveClientDevice
         $clientid=$1;;
         if (&checkRegister($mac))
         {
-            my $error_str="Laitteisto-osoite on jo k\u00e4yt\u00f6ss\u00e4 / MAC-Address is already registered";
+            my $error_str="MAC address already registered";
             $error_str=$main::dbh_hpna->do("UPDATE radreply set Value=? where  UserName=? and Attribute='Reply-Message'", undef, $replymessage, $mac);
             if ($error_str eq "0E0")
             {
