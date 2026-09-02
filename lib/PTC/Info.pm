@@ -1,13 +1,14 @@
 package PTC::Info;
 
-require 5.000;
+use strict;
+use warnings;
 use Exporter;
 use Carp;
-use strict;
 use DBI;
-use vars qw(@ISA @EXPORT $VERSION );
-@ISA = qw(Exporter);
-@EXPORT = qw(loaddir);
+use PTC::Config;
+
+our @ISA = qw(Exporter);
+our @EXPORT = qw(loaddir);
 
 
 sub loaddir {
@@ -19,17 +20,18 @@ sub loaddir {
     my $search = shift ;
     my $mikalie = shift;
     my $database= shift;
-    
+
     my $use_clientSite=0;
+    my $ptc_home = get_config()->{home};
 
     my @rv=();
-    
+
     my ($nan,$auth,$redir)=(0,0,0);
     loadUsage();
     loadSFQUsage();
     my @temp;
     my $file_msg='';
-    my $online_file="/opt/perl-traffic-control/tmp/currently_online";
+    my $online_file="$ptc_home/tmp/currently_online";
     
     my %list=();;
     if ((defined $database ) && ($database eq 1))
@@ -46,8 +48,8 @@ sub loaddir {
         }
         else
         {
-            open (F,">/opt/perl-traffic-control/tmp/clientSite");
-            my $str="/usr/java/j2sdk1.4.2_06/bin/java -classpath /opt/perl-traffic-control/lib/mysql.jar:/opt/perl-traffic-control/nms:/opt/perl-traffic-control/lib/sljc.jar getSiteClients $search";
+            open (F,">$ptc_home/tmp/clientSite");
+            my $str="/usr/java/j2sdk1.4.2_06/bin/java -classpath $ptc_home/lib/mysql.jar:$ptc_home/nms:$ptc_home/lib/sljc.jar getSiteClients $search";
             print F $str;
             my @clientList=`$str`;
 
@@ -117,9 +119,9 @@ sub loaddir {
             }
 
         }
-        if (-e "/opt/perl-traffic-control/tmp/col.list")
+        if (-e "$ptc_home/tmp/col.list")
         {
-            open(F,"</opt/perl-traffic-control/tmp/col.list");
+            open(F,"<$ptc_home/tmp/col.list");
             my $ready=0;
             while (<F>)
             {

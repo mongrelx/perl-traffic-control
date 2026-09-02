@@ -1,9 +1,8 @@
 package PTC::Device;
 
-
-require 5.000;
+use strict;
+use warnings;
 use Exporter;
-use lib qw(/opt/perl-traffic-control/lib);
 use PTC::Utils;
 use Carp;
 

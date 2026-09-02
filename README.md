@@ -1,121 +1,149 @@
 # perl-traffic-control
 
-<h2>Perl QoS and traffic shaping.</h2>
-<ul>
-<li>RRD logging & graphing
-<li>Webmin module
-<li>Curses interface
-<li>Captive portal
-<li>Scales up to 2000 user, but easy to shape traffic on small scale too
-<li>I'm currently using it to ensure my bandwidth in family shared lined as kids consume lot's of bandwidth
-<li>Either per device or per user bw
-<li>blacklist 
-<li>timed events
-</ul>
+Perl QoS and traffic shaping for ISP management.
 
-This was in production usage between 2000-2012 and it performed quite nicely
+## Features
 
-<h2>Requirements</h2>
-<ul>
-<li> linux kernel with htc support
-<li> mysql > 4.0.0
-<li> http-server
-<li> iptables
-<li> perl > 5.0
-<li> Curses::Application
-<li> DBI
-<li> DBH::mysql
-</ul>
+- RRD logging & graphing
+- Webmin module
+- Curses interface
+- Captive portal
+- Scales up to 2000 users
+- Per-device or per-user bandwidth control
+- Blacklist management
+- Timed events
 
-<h2>Optional</h2>
-<ul>
-<li> radius
-<li> Authen::Radius
-<li> iptraf
-</ul>
+## Architecture
 
-<h2>Installation on debian 8</h2>
-<ul>
-<li> apt-get install git
-<br>
-<li> apt-get install libdbi-perl librrdtool-oo-perl 
-<li> apt-get install libdbd-mysql libdbd-mysql-perl libmysqlclient18
-<li> apt-get install libconvert-ber-perl mysql-server freeradius-mysql libauthen-radius-perl
-<li> apt-get install libcurses-perl libjson-perl libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
-<li> cpan -i Curses::Application
-<!---<li> cpan -i RRD ???-->
-<li> cd /opt/
-<li> git clone https://github.com/mongrelx/perl-traffic-control.git
-</ul>
-<h2>Installation on debian 9</h2>
-<ul>
-<li> apt-get install git
-<br>
-<li> apt-get install libdbi-perl librrdtool-oo-perl 
-<li> apt-get install libdbd-mysql libdbd-mysql-perl 
-<li> apt-get install libconvert-ber-perl mysql-server freeradius-mysql libauthen-radius-perl
-<li> apt-get install libcurses-perl libjson-perl libsnmp-perl libsnmp-session-perl libexporter-autoclean-perl
-<li> cpan -i Curses::Application       
-<!---<li> cpan -i RRD ???-->
-<li> cd /opt/
-<li> git clone https://github.com/mongrelx/perl-traffic-control.git
-</ul>
-<h2>Configuration</h2>
-<h3>Database</h3>
-<ul>
-<li> mysqladmin create ptc -p
-<li> mysqladmin create ptc_auth -p
-<li> mysql -p<br>
-mysql>GRANT ALL PRIVILEGES   ON ptc.* TO 'ptc_user'@'%'   IDENTIFIED BY 'ptc_pass';
-mysql>GRANT ALL PRIVILEGES   ON ptc_auth.* TO 'ptc_user'@'%'   IDENTIFIED BY 'ptc_pass';        
-<li> (DEBIAN 8) mysql -p ptc_auth < /etc/freeradius/sql/mysql/schema.sql
-<li> (DEBIAN 9)  mysql -p ptc_auth < /etc/freeradius/3.0/mods-config/sql/main/mysql/schema.sql
-</ul>
-<h3>Web-server</h3>
-<h3>Interfaces</h3>
-<h3>Radius</h3>
-<ul>
-        
-<h4>debian 8</h4>
-<li> edit sql.conf to match db_user,db_pass,db_name
-<li> include sql.conf from freeradius.conf
-<li> add to /etc/freeradius/users <br>
-DEFAULT Autz-Type :=PTC_USER <br>
-        Fall-Through = Yes<br>
-<li> add to /etc/freeradius/sites-enable/default<br>
-under Authorization section<br>
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   ptc-app   │────▶│    ptc-db   │◀────│  ptc-radius │
+│  (Perl QoS) │     │  (MySQL 8)  │     │ (FreeRADIUS)│
+└─────────────┘     └─────────────┘     └─────────────┘
+```
 
- Autz-Type PTC_USER {
-                sql
-        }
-</ul>
+## Quick Start (Docker)
 
-<ul>
-        
-<h4>debian 9</h4>
-<li> edit /etc/freeradius/3.0/mods-available/sql to match db_user,db_pass,db_name
-<li> enable mod sql
-<li> add to /etc/freeradius/3.0/users <br>
-DEFAULT Autz-Type :=PTC_USER <br>
-        Fall-Through = Yes<br>
-<li> add to /etc/freeradius/sites-enabled/default<br>
-under Authorization section<br>
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/mongrelx/perl-traffic-control.git
+   cd perl-traffic-control
+   ```
 
- Autz-Type PTC_USER {
-                sql
-        }
-edit dictionary to have clientid string attribute
-</ul>
+2. Create your environment file:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your settings
+   ```
 
-edit /opt/perl-traffic-control/etc/AAA/home.AAA.conf to match your network
+3. Start the services:
+   ```bash
+   docker-compose up -d
+   ```
 
+4. Check the status:
+   ```bash
+   docker-compose ps
+   ```
 
-/opt/perl-traffic-control/bin/iptable-basic  > /etc/iptables.up.rules 
-iptables-restore < /etc/iptables.up.rules
+## Configuration
 
+### Environment Variables
 
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PTC_DB_HOST` | `db` | MySQL host for PTC database |
+| `PTC_DB_NAME` | `ptc` | PTC database name |
+| `PTC_DB_USER` | `ptc_user` | PTC database user |
+| `PTC_DB_PASSWORD` | `ptc_pass` | PTC database password |
+| `PTC_RADIUS_DB_HOST` | `db` | MySQL host for RADIUS database |
+| `PTC_RADIUS_DB_NAME` | `radius` | RADIUS database name |
+| `PTC_RADIUS_DB_USER` | `radius` | RADIUS database user |
+| `PTC_RADIUS_DB_PASSWORD` | `radpass` | RADIUS database password |
+| `PTC_OPENNMS_DB_HOST` | `localhost` | PostgreSQL host for OpenNMS (optional) |
+| `PTC_OPENNMS_DB_NAME` | `opennms` | OpenNMS database name |
+| `PTC_OPENNMS_DB_USER` | `opennms` | OpenNMS database user |
+| `PTC_OPENNMS_DB_PASSWORD` | `opennms` | OpenNMS database password |
+| `PTC_REGION` | `default` | Region configuration |
+| `PTC_PURPOSE` | `router` | Purpose (router/nms/mail) |
+| `PTC_DEBUG` | `0` | Debug level |
+| `PTC_HOME` | `/opt/perl-traffic-control` | Application home directory |
+| `MYSQL_ROOT_PASSWORD` | `changeme` | MySQL root password (Docker) |
 
-<h2>Usage</h2>
+### Configuration Files
 
-if nat is used on output , you'll need to enable ifb device to control traffic from in to out
+- `etc/www.conf` - Main configuration (generated from environment)
+- `etc/AAA/<region>.AAA.conf` - Regional configuration
+- `etc/default.conf` - Default settings
 
+## Bare Metal Installation
+
+### Requirements
+
+- Linux kernel with HTB support
+- MySQL >= 4.0.0
+- HTTP server
+- iptables
+- Perl >= 5.0
+
+### Debian 11/12
+
+```bash
+apt-get install libdbi-perl librrdtool-oo-perl \
+    libdbd-mysql-perl mysql-server freeradius-mysql libauthen-radius-perl \
+    libcurses-perl libjson-perl libsnmp-perl libsnmp-session-perl \
+    libexporter-autoclean-perl libtry-tiny-perl libwww-perl
+
+cpanm Curses::Application
+
+cd /opt/
+git clone https://github.com/mongrelx/perl-traffic-control.git
+```
+
+### Database Setup
+
+```bash
+mysqladmin create ptc -p
+mysqladmin create ptc_auth -p
+
+mysql -p <<EOF
+GRANT ALL PRIVILEGES ON ptc.* TO 'ptc_user'@'%' IDENTIFIED BY 'ptc_pass';
+GRANT ALL PRIVILEGES ON ptc_auth.* TO 'ptc_user'@'%' IDENTIFIED BY 'ptc_pass';
+EOF
+
+# For Debian 11+
+mysql -p ptc_auth < /etc/freeradius/3.0/mods-config/sql/main/mysql/schema.sql
+```
+
+### Configuration
+
+1. Set environment variables or edit `etc/www.conf`
+2. Configure your network in `etc/AAA/<region>.AAA.conf`
+3. Generate iptables rules:
+   ```bash
+   bin/iptable-basic > /etc/iptables.up.rules
+   iptables-restore < /etc/iptables.up.rules
+   ```
+
+## Usage
+
+### Curses Interface
+
+```bash
+perl -Ilib bin/InfoScreen
+```
+
+### Web Interface
+
+Configure your HTTP server to serve the `bin/` directory with CGI support.
+
+## Security Notes
+
+- Change all default passwords in production
+- Use environment variables for credentials in Docker
+- The app container requires `NET_ADMIN` and `NET_RAW` capabilities
+- Consider using Docker secrets for sensitive values
+
+## License
+
+See [LICENSE](LICENSE) file.

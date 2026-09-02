@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: ptc-db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme}
+      MYSQL_DATABASE: ptc
+      MYSQL_USER: ptc_user
+      MYSQL_PASSWORD: ${PTC_DB_PASSWORD:-ptc_pass}
+    volumes:
+      - ptc-db-data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  radius:
+    image: freeradius/freeradius-server:latest
+    container_name: ptc-radius
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./etc/radius.conf:/etc/freeradius/3.0/radiusd.conf:ro
+      - ./etc/dictionary:/etc/freeradius/3.0/dictionary:ro
+    ports:
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ptc-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PTC_DB_HOST: db
+      PTC_DB_NAME: ptc
+      PTC_DB_USER: ptc_user
+      PTC_DB_PASSWORD: ${PTC_DB_PASSWORD:-ptc_pass}
+      PTC_RADIUS_DB_HOST: db
+      PTC_RADIUS_DB_NAME: radius
+      PTC_RADIUS_DB_USER: ${RADIUS_DB_USER:-radius}
+      PTC_RADIUS_DB_PASSWORD: ${RADIUS_DB_PASSWORD:-radpass}
+      PTC_REGION: ${PTC_REGION:-default}
+      PTC_PURPOSE: ${PTC_PURPOSE:-router}
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: host
+    restart: unless-stopped
+
+volumes:
+  ptc-db-data:

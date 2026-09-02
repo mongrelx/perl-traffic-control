@@ -1,25 +1,20 @@
 package PTC::Utils;
 
-
-require 5.000;
+use strict;
+use warnings;
 use Exporter;
 use Carp;
-use strict;
 use DBI;
-my $dbhost_default="localhost";
-my $db_table="ptc";
-my $db_user="ptc_user";
-my $db_pass="ptc_pass";
-use vars qw(@ISA @EXPORT $VERSION );
-@ISA = qw(Exporter);
-@EXPORT = qw(checkDHCPD checkConntrack loadInterfaces sortHashValue  isInSubnet round printDebug getCurrentLoad loadList loadServerList Tpassword Tvalue error loadConfig getVersion setQoSDevice loadCoreSwitchList loadRegionInfo);
+use PTC::Config;
+
+our @ISA = qw(Exporter);
+our @EXPORT = qw(checkDHCPD checkConntrack loadInterfaces sortHashValue  isInSubnet round printDebug getCurrentLoad loadList loadServerList Tpassword Tvalue error loadConfig getVersion setQoSDevice loadCoreSwitchList loadRegionInfo);
 
 
 sub loadRegionInfo($$)
 {
     my $regionValue=shift;
-    my $dbhost=shift || $dbhost_default;
-    my $dbh_ptc= DBI->connect("DBI:mysql:$db_table:$dbhost", $db_user, $db_pass);
+    my $dbh_ptc = get_dbh();
     my $sth_ptc= $dbh_ptc->prepare("SELECT Attribute,Value FROM routerConfig WHERE router=?");
     $sth_ptc->execute($regionValue);
     while ( my @row = $sth_ptc->fetchrow_array ) {
@@ -307,8 +302,7 @@ sub getCurrentLoad
 sub loadInterfaces
 {
     my $node=shift;
-    my $dbhost=$dbhost_default;
-    my $dbh = DBI->connect("dbi:Pg:dbname=opennms;host=$dbhost", "opennms", "opennms");
+    my $dbh = get_opennms_dbh();
     my $sth;
     if (defined $node)
     {
@@ -394,8 +388,7 @@ sub sortHashValue  {
 
 sub loadServerList
 {
-    my $db_host=shift || $dbhost_default;
-    my $dbh = DBI->connect("dbi:mysql:dbname=".$db_table.";host=".$db_host, $db_user, $db_pass);
+    my $dbh = get_dbh();
     my $server;my $sth1;
     #   chomp($server);
     $sth1= $dbh->prepare("SELECT id,Value,Router FROM routerConfig WHERE Attribute='serviceip' ");
@@ -414,8 +407,7 @@ sub loadServerList
 
 sub loadCoreSwitchList
 {
-    my $db_host=shift | $dbhost_default;
-    my $dbh = DBI->connect("dbi:mysql:dbname=".$db_table.";host=".$db_host, $db_user, $db_pass);
+    my $dbh = get_dbh();
     my $server;my $sth1;
     #   chomp($server);
     $sth1= $dbh->prepare("SELECT id,Value,Router FROM routerConfig WHERE Attribute='CORESWITCH' ");
@@ -435,8 +427,7 @@ sub loadCoreSwitchList
 sub loadList
 {
     my ($circuitid,$server) = @_;
-    my $dbhost=$dbhost_default;
-    my $dbh = DBI->connect("dbi:Pg:dbname=opennms;host=$dbhost", "opennms", "opennms");
+    my $dbh = get_opennms_dbh();
 
     my $sth1;
     #   chomp($server);
@@ -530,19 +521,20 @@ sub loadConfig
     my $config_file=shift || '';
     my $donotloadAAA=shift || 0;
     my $debug=shift || 0;
-my $main_config_file="/opt/perl-traffic-control/etc/www.conf";   
- 
+    my $ptc_home = $ENV{PTC_HOME} || '/opt/perl-traffic-control';
+    my $main_config_file="$ptc_home/etc/www.conf";
+
     my @configs;
     if ((!defined $config_file) || ($config_file eq ''))
     {
-	    if ( -e  "/opt/perl-traffic-control/etc/www.conf")
+	    if ( -e  "$ptc_home/etc/www.conf")
         {
-            my $purpose=lc(`cat /opt/perl-traffic-control/etc/www.conf | grep main::purpose`);
+            my $purpose=lc(`cat $ptc_home/etc/www.conf | grep main::purpose`);
             $purpose=~s/main::purpose=//;
             chomp($purpose);
             $purpose=uc($purpose);
             $main::purpose=$purpose;
-            push(@configs,"/opt/perl-traffic-control/etc/www.conf");
+            push(@configs,"$ptc_home/etc/www.conf");
             if (
                 (
                  ($purpose ne "NMS") &&  ($purpose ne "MAIL")
@@ -551,7 +543,7 @@ my $main_config_file="/opt/perl-traffic-control/etc/www.conf";
                 (
                  (defined $donotloadAAA) && ($donotloadAAA ne 1)
                 )
-                
+
                )
             {
                 open(F,$main_config_file);
@@ -573,7 +565,7 @@ my $main_config_file="/opt/perl-traffic-control/etc/www.conf";
                     {
                         print "Please give config file\n";
                     }
-                        $config_file="/opt/perl-traffic-control/etc/AAA/$main::region.AAA.conf";
+                        $config_file="$ptc_home/etc/AAA/$main::region.AAA.conf";
                         push(@configs,$config_file);
                     }
                 }
@@ -590,14 +582,14 @@ my $main_config_file="/opt/perl-traffic-control/etc/www.conf";
         }
         else
         {
-            print "/opt/perl-traffic-control/etc/www.conf not found !!\n";
+            print "$ptc_home/etc/www.conf not found !!\n";
         }
     }
     else
     {
         if (!defined $donotloadAAA)
         {
-            $config_file="/opt/perl-traffic-control/etc/AAA/$config_file.AAA.conf";
+            $config_file="$ptc_home/etc/AAA/$config_file.AAA.conf";
             print "Config file is $config_file \n";
             push(@configs,$config_file);
         }
@@ -606,11 +598,11 @@ my $main_config_file="/opt/perl-traffic-control/etc/www.conf";
             print "Config file is $config_file \n";
             push(@configs,$config_file);
         }
-        
+
     }
 
 
-    push(@configs,"/opt/perl-traffic-control/etc/default.conf");
+    push(@configs,"$ptc_home/etc/default.conf");
     for $config_file (@configs)
     {
         #    print "Parsing $config_file\n" if ($main::debug > 0);

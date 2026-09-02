@@ -1,0 +1,50 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Perl
+*.pm~
+*.pl~
+*.cgi~
+blib/
+Makefile
+Makefile.old
+MANIFEST.bak
+META.yml
+MYMETA.yml
+MYMETA.json
+pm_to_blib
+*.bs
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.bundle
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+nbproject/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Runtime files
+tmp/currently_online
+tmp/currently_online.tmp
+tmp/unknown_hosts
+tmp/unknown_hosts.tmp
+tmp/clientSite
+tmp/col.list
+
+# Logs
+*.log
