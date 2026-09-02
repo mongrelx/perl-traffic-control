@@ -20,7 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Digest::MD5
+          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Digest::MD5 CGI CGI::Cookie Authen::Radius
 
       - name: Check syntax of all modules
         run: |
@@ -87,7 +87,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: false
+          load: true
           tags: perl-traffic-control:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
