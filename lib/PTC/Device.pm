@@ -215,7 +215,7 @@ sub saveClientDevice
 
 sub showHPNAAddress
 {
-
+    my $username = shift;
     my $ref=loadHPNAClient($username);
     my %hpnaClients=%$ref;
     foreach (keys %hpnaClients)
