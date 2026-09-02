@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, modernize-containerize ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  perl-syntax:
+    name: Perl Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.38'
+
+      - name: Install dependencies
+        run: |
+          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Digest::MD5
+
+      - name: Check syntax of all modules
+        run: |
+          for f in lib/PTC/*.pm; do
+            echo "Checking $f..."
+            perl -Ilib -c "$f" || exit 1
+          done
+
+      - name: Check syntax of bin scripts
+        run: |
+          for f in bin/mac_AAA bin/iptable-basic; do
+            echo "Checking $f..."
+            perl -Ilib -c "$f" || exit 1
+          done
+
+  perl-critic:
+    name: Perl Critic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.38'
+
+      - name: Install Perl Critic
+        run: |
+          cpanm --notest Perl::Critic
+
+      - name: Run Perl Critic (severity 4-5 only)
+        run: |
+          perlcritic --severity 4 --verbose "%f:%l:%c: %m (%s)\n" lib/PTC/Config.pm lib/PTC/Utils.pm lib/PTC/NetUtils.pm lib/PTC/Device.pm lib/PTC/HPNA.pm lib/PTC/Info.pm || true
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.38'
+
+      - name: Install dependencies
+        run: |
+          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Digest::MD5 Test::More Test::Exception
+
+      - name: Run tests
+        run: |
+          prove -v t/
+
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: perl-traffic-control:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test Docker image
+        run: |
+          docker run --rm perl-traffic-control:test perl -Ilib -e "use PTC::Config; print 'OK\n'"
