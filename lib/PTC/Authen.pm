@@ -5,9 +5,10 @@ package WWW::Authen::Simple;
 # $Date: 2004/11/02 10:13:09 $
 # $Author: eematle $
 
-use 5.00503;
+use 5.010;
 use strict;
-use Digest::MD5 ();
+use warnings;
+use Digest::SHA ();
 use Carp;
 use CGI qw(:standard);
 use CGI::Cookie;
@@ -50,8 +51,24 @@ my $conf = {
 	#group_statement	=> 'SELECT g.Name, ug.gid, ug.accessbit
 	#                    FROM Groups g, UserGroups ug
 	#                    WHERE g.gid = ug.gid AND ug.uid = %uid%',
-	# subroutine ref used to encrypt password for db storage
-	'crypt'	=> sub { return Digest::MD5::md5_base64($_[0]); }
+	# subroutine ref to hash password for db storage (bcrypt)
+	'hash_password' => sub {
+		my $password = shift;
+		require Crypt::Bcrypt;
+		return Crypt::Bcrypt::bcrypt($password, '2b', Crypt::Bcrypt::bcrypt_random_salt());
+	},
+	# verify password against stored hash (supports legacy MD5)
+	'verify_password' => sub {
+		my ($password, $stored) = @_;
+		if ($stored =~ /^\$2b\$/) {
+			# bcrypt hash
+			require Crypt::Bcrypt;
+			return Crypt::Bcrypt::bcrypt_check($password, $stored);
+		} else {
+			# Legacy MD5 hash — verify and signal re-hash needed
+			return Digest::SHA::sha256_base64($password) eq $stored;
+		}
+	},
 	};
 
 sub new
@@ -293,15 +310,14 @@ sub login
 
 		# invalid login (user doesn't exist)
 		return (0,$login) unless $uid;
-		# invalid login (account is disabled)
-		#return (0,$login) if &{$self->conf->{user_table}{_disabled_status}}($status);
 
-		#print "!$passwd, $local_passwd!";
-		my $crypt_passwd = $self->_getcrypt($passwd);
-		if ($passwd eq $local_passwd)
+		if ($self->_verify_password($passwd, $local_passwd))
 		{
-			# they're authenticated... need to update local session, set cookie ticket for them, and return "1" for logged in
-	
+			# Re-hash with bcrypt if stored as legacy MD5
+			if ($local_passwd !~ /^\$2b\$/) {
+				$self->_rehash_password($login, $passwd);
+			}
+
 			my $new_ticket = $self->_ticket;
 			my $point = time;
 			$self->{_store}{username} = $login;
@@ -553,14 +569,33 @@ sub _ticket
 	{
 		$ticket .= chr(rand(256));
 	}
-	return Digest::MD5::md5_hex($ticket);
+	return Digest::SHA::sha256_hex($ticket);
 }
 
-sub _getcrypt
+sub _hash_password
 {
 	ref(my $self = shift) or croak "instance variable needed";
 	my $pass = shift;
-	return &{$self->conf->{'crypt'}}($pass);
+	return &{$self->conf->{'hash_password'}}($pass);
+}
+
+sub _verify_password
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my ($password, $stored) = @_;
+	return &{$self->conf->{'verify_password'}}($password, $stored);
+}
+
+sub _rehash_password
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my ($login, $password) = @_;
+	my $new_hash = $self->_hash_password($password);
+	$self->db->do(
+		'UPDATE ' . $self->conf->{user_table}{_table} .
+		' SET ' . $self->conf->{user_table}{passwd} . ' = ' . $self->db->quote($new_hash) .
+		' WHERE ' . $self->conf->{user_table}{login} . ' = ' . $self->db->quote($login)
+	);
 }
 
 1;

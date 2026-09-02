@@ -28,7 +28,7 @@ RUN cpanm --notest \
     Try::Tiny \
     LWP::UserAgent \
     HTTP::Request \
-    Digest::MD5 \
+    Crypt::Bcrypt \
     && rm -rf /root/.cpanm
 
 # Install RRDTool::OO (optional, for -s stats mode)

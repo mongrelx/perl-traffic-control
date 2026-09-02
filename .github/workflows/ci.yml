@@ -20,7 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Digest::MD5 CGI CGI::Cookie Authen::Radius
+          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Crypt::Bcrypt CGI CGI::Cookie Authen::Radius
 
       - name: Check syntax of all modules
         run: |
@@ -68,7 +68,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Digest::MD5 Test::More Test::Exception
+          cpanm --notest DBI Try::Tiny JSON LWP::UserAgent HTTP::Request Crypt::Bcrypt Test::More Test::Exception
 
       - name: Run tests
         run: |
