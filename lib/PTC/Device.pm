@@ -6,9 +6,9 @@ use Exporter;
 use PTC::Utils;
 use Carp;
 
-@ISA = qw(Exporter);
+our @ISA = qw(Exporter);
 
-@EXPORT = qw(getPreviewMessage updateWLANnetMessage clearWLANnetMessage getWLANnetMessage getWLANnetClientMessage saveClientDevice  showHPNAAddress  loadHPNAClient checkRegister getHPNAPassword saveHPNAPassword addClient updateClient LANWORLD);
+our @EXPORT = qw(getPreviewMessage updateWLANnetMessage clearWLANnetMessage getWLANnetMessage getWLANnetClientMessage saveClientDevice  showHPNAAddress  loadHPNAClient checkRegister getHPNAPassword saveHPNAPassword addClient updateClient LANWORLD);
 
 
 
@@ -22,7 +22,7 @@ sub getWLANnetMessage
     my $sth = $main::dbh_ptc->prepare("SELECT StartTime,ticket FROM blacklist WHERE UserName = ? AND StopTime = '0000-00-00 00:00:00' ;");
     $sth->execute($username);
     my @row;
-    my $msg="";
+    my %msg;
     while (@row = $sth->fetchrow_array ) {
         $msg{$row[0]}=$row[1];
     }
@@ -35,7 +35,7 @@ sub getPreviewMessage
     my $sth = $dbh->prepare("SELECT StartTime,ticket FROM blacklist WHERE id=1 ;");
     $sth->execute();
     my @row;
-    my $msg="";
+    my %msg;
     while (@row = $sth->fetchrow_array ) {
         $msg{$row[0]}=$row[1];
     }
@@ -137,7 +137,7 @@ sub saveClientDevice
 
     if ($replymessage =~m#^(\d+)\/.*#)
     {
-        $clientid=$1;;
+        my $clientid=$1;
         if (&checkRegister($mac))
         {
             my $error_str="MAC address already registered";
