@@ -137,6 +137,33 @@ perl -Ilib bin/InfoScreen
 
 Configure your HTTP server to serve the `bin/` directory with CGI support.
 
+## nftables Compatibility
+
+The Docker container uses `iptables-nft` (iptables with nftables backend) by default on Debian 11+. This provides:
+
+- Full compatibility with the existing iptables commands used by PTC
+- Modern nftables kernel backend for better performance
+- Future migration path to native nftables commands
+
+### Verifying nftables backend
+
+```bash
+# Check if using nftables backend
+iptables --version
+# Should show: iptables v1.8.x (nf_tables)
+
+# View nftables ruleset
+nft list ruleset
+```
+
+### Migration to native nftables
+
+For future migration to native nftables commands:
+
+1. The `nftables` package is included in the Docker image
+2. Current iptables commands will continue to work via the compatibility layer
+3. Native nftables migration is a future enhancement
+
 ## Security Notes
 
 - Change all default passwords in production

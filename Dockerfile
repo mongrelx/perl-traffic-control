@@ -1,9 +1,12 @@
 FROM perl:5.38-slim
 
 # Install system dependencies
+# Note: On Debian 11+, iptables is iptables-nft by default (nftables backend)
+# This provides compatibility with modern kernels while maintaining iptables CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     iptables \
+    nftables \
     libdbi-perl \
     libdbd-mysql-perl \
     libcurses-perl \
