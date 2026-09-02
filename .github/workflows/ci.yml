@@ -94,4 +94,4 @@ jobs:
 
       - name: Test Docker image
         run: |
-          docker run --rm perl-traffic-control:test perl -Ilib -e "use PTC::Config; print 'OK\n'"
+          docker run --rm --entrypoint perl perl-traffic-control:test -Ilib -e "use PTC::Config; print 'OK\n'"

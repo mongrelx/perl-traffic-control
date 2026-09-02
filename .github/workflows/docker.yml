@@ -62,4 +62,4 @@ jobs:
       - name: Test image
         if: github.event_name == 'pull_request'
         run: |
-          docker run --rm $(echo ${{ steps.meta.outputs.tags }} | head -1) perl -Ilib -e "use PTC::Config; print 'PTC::Config OK\n'"
+          docker run --rm --entrypoint perl $(echo ${{ steps.meta.outputs.tags }} | head -1) -Ilib -e "use PTC::Config; print 'PTC::Config OK\n'"
