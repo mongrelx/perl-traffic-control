@@ -9,8 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Build deps for Perl XS modules
     gcc \
     make \
+    pkg-config \
     libmariadb-dev \
-    libncurses5-dev \
+    libncurses-dev \
     librrd-dev \
     # Runtime deps
     libsnmp-perl \
