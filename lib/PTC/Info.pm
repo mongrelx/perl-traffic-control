@@ -36,8 +36,8 @@ sub loaddir {
     {
         if ($use_clientSite eq 1)
         {
-            my $sth_ptc= $main::dbh_ptc->prepare("SELECT clientid FROM clientSite WHERE siteid=$search");
-            $sth_ptc->execute;
+            my $sth_ptc= $main::dbh_ptc->prepare("SELECT clientid FROM clientSite WHERE siteid=?");
+            $sth_ptc->execute($search);
             while ( my @row = $sth_ptc->fetchrow_array ) {
                 my $clientid=$row[0];
                 $clientid=~s/\.\d+//;

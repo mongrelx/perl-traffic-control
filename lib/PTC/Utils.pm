@@ -20,8 +20,8 @@ sub loadRegionInfo($$)
     my $regionValue=shift;
     my $dbhost=shift || $dbhost_default;
     my $dbh_ptc= DBI->connect("DBI:mysql:$db_table:$dbhost", $db_user, $db_pass);
-    my $sth_ptc= $dbh_ptc->prepare("SELECT Attribute,Value FROM routerConfig WHERE router='".$regionValue."'");
-    $sth_ptc->execute;
+    my $sth_ptc= $dbh_ptc->prepare("SELECT Attribute,Value FROM routerConfig WHERE router=?");
+    $sth_ptc->execute($regionValue);
     while ( my @row = $sth_ptc->fetchrow_array ) {
         my $name=$row[0];
         #$$name=$row[1];
@@ -312,13 +312,14 @@ sub loadInterfaces
     my $sth;
     if (defined $node)
     {
-        $sth= $dbh->prepare("SELECT n.nodeid,n.nodelabel,a.rack,a.slot,a.port,a.category,n.nodesysdescription,i.ipaddr,n.nodeparentid,a.circuitid FROM node AS n, assets AS a, ifservices AS i WHERE n.nodeid=i.nodeid AND i.serviceid=1 AND n.nodeid=a.nodeid AND n.nodeid='".$node."'AND ipaddr != '192.168.11.1' ORDER BY nodeid");
+        $sth= $dbh->prepare("SELECT n.nodeid,n.nodelabel,a.rack,a.slot,a.port,a.category,n.nodesysdescription,i.ipaddr,n.nodeparentid,a.circuitid FROM node AS n, assets AS a, ifservices AS i WHERE n.nodeid=i.nodeid AND i.serviceid=1 AND n.nodeid=a.nodeid AND n.nodeid=? AND ipaddr != '192.168.11.1' ORDER BY nodeid");
+        $sth->execute($node);
     }
     else
     {
         $sth= $dbh->prepare("SELECT n.nodeid,n.nodelabel,a.rack,a.slot,a.port,a.category,n.nodesysdescription,i.ipaddr,n.nodeparentid,a.circuitid FROM node AS n, assets AS a, ifservices AS i WHERE n.nodeid=i.nodeid AND i.serviceid=1 AND n.nodeid=a.nodeid AND ipaddr != '192.168.11.1' ORDER BY nodeid");
+        $sth->execute;
     }
-    $sth->execute;
     my %node_info;
 
     my $i=0;
@@ -444,18 +445,19 @@ sub loadList
         if ($circuitid eq "REGIONS")
         {
             $sth1= $dbh->prepare(" select distinct a.region,count(n.nodeid) from assets as a,node as n where a.nodeid=n.nodeid GROUP by a.region");
+            $sth1->execute;
         }
         else
         {
-            $sth1= $dbh->prepare("SELECT ii.nodeid,ii.ipaddr,n.nodelabel,a.city,a.region,a.division FROM node AS n,assets AS a , ifservices AS i , ipinterface AS ii WHERE n.nodeid=i.nodeid AND i.ipaddr=ii.ipaddr AND a.circuitid='".$circuitid."' AND a.nodeid=i.nodeid  AND ii.nodeid=a.nodeid AND serviceid=1 ORDER BY i.ifindex ");
+            $sth1= $dbh->prepare("SELECT ii.nodeid,ii.ipaddr,n.nodelabel,a.city,a.region,a.division FROM node AS n,assets AS a , ifservices AS i , ipinterface AS ii WHERE n.nodeid=i.nodeid AND i.ipaddr=ii.ipaddr AND a.circuitid=? AND a.nodeid=i.nodeid  AND ii.nodeid=a.nodeid AND serviceid=1 ORDER BY i.ifindex ");
+            $sth1->execute($circuitid);
         }
     }
     else
     {
-        $sth1= $dbh->prepare("SELECT ii.nodeid,ii.ipaddr,n.nodelabel,a.city,a.region,a.division FROM node AS n,assets AS a , ifservices AS i , ipinterface AS ii WHERE n.nodeid=i.nodeid AND i.ipaddr=ii.ipaddr AND a.circuitid='".$circuitid."' AND a.nodeid=i.nodeid  AND ii.nodeid=a.nodeid  AND i.nodeid='".$server."' AND serviceid=1");
+        $sth1= $dbh->prepare("SELECT ii.nodeid,ii.ipaddr,n.nodelabel,a.city,a.region,a.division FROM node AS n,assets AS a , ifservices AS i , ipinterface AS ii WHERE n.nodeid=i.nodeid AND i.ipaddr=ii.ipaddr AND a.circuitid=? AND a.nodeid=i.nodeid  AND ii.nodeid=a.nodeid  AND i.nodeid=? AND serviceid=1");
+        $sth1->execute($circuitid, $server);
     }
-    
-    $sth1->execute;
     my %servers;
     while ( my @row = $sth1->fetchrow_array ) {
         

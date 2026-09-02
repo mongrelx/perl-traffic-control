@@ -20,8 +20,8 @@ use Carp;
 sub getWLANnetMessage
 {
     my $username=shift;
-    my $sth = $main::dbh_ptc->prepare("SELECT StartTime,ticket FROM blacklist WHERE UserName = '$username' AND StopTime = '0000-00-00 00:00:00' ;");
-    $sth->execute();
+    my $sth = $main::dbh_ptc->prepare("SELECT StartTime,ticket FROM blacklist WHERE UserName = ? AND StopTime = '0000-00-00 00:00:00' ;");
+    $sth->execute($username);
     my @row;
     my $msg="";
     while (@row = $sth->fetchrow_array ) {
@@ -47,8 +47,8 @@ sub getWLANnetClientMessage
 {
     my $clientid=shift;
     #print "SELECT StartTime,ticket FROM blacklist WHERE clientid = '$clientid' AND active = 1";
-    my $sth = $main::dbh_ptc->prepare("SELECT StartTime,ticket FROM blacklist WHERE clientid = '$clientid' AND active=1;");
-    $sth->execute();
+    my $sth = $main::dbh_ptc->prepare("SELECT StartTime,ticket FROM blacklist WHERE clientid = ? AND active=1;");
+    $sth->execute($clientid);
     my @row;
     my %msg=();
     while (@row = $sth->fetchrow_array ) {
@@ -64,7 +64,7 @@ sub clearWLANnetMessage
         my $clientid=shift;
         if ($clientid)
         {
-            my $sth = $main::dbh_ptc->do("UPDATE blacklist SET StopTime = NOW(),active=0 WHERE clientid = '$clientid' AND active=1 ;");
+            $main::dbh_ptc->do("UPDATE blacklist SET StopTime = NOW(),active=0 WHERE clientid = ? AND active=1", undef, $clientid);
         }
         #$sth->execute();
         #    my @row;
@@ -80,7 +80,7 @@ sub updateWLANnetMessage
         my $clientid=shift;
         if ($clientid)
         {
-            my $sth = $main::dbh_ptc->do("UPDATE blacklist SET ReadTime = NOW() WHERE clientid = '$clientid' AND active=1 ;");
+            $main::dbh_ptc->do("UPDATE blacklist SET ReadTime = NOW() WHERE clientid = ? AND active=1", undef, $clientid);
         }
 }
 
@@ -89,8 +89,8 @@ sub loadHPNAClient
     my $username=shift;
     $username=~s/\@wlanmail.com//;
     my %hpnaClients;
-    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radreply WHERE UserName = '$username' ORDER BY Attribute;");
-    $sth->execute();
+    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radreply WHERE UserName = ? ORDER BY Attribute;");
+    $sth->execute($username);
     my @row;
 
     while ( @row = $sth->fetchrow_array ) {
@@ -111,10 +111,10 @@ sub addClient
         $speed="1024/1024";
     }
 
-    $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$username','Cleartext-Password',':=','$password')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Reply-Message',':=','$clientid/$username')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','clientid',':=','$clientid')");
-    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$username','Filter-Id',':=','$speed')");
+    $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,?,'Cleartext-Password',':=',?)", undef, $username, $password);
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'Reply-Message',':=',?)", undef, $username, "$clientid/$username");
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'clientid',':=',?)", undef, $username, $clientid);
+    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'Filter-Id',':=',?)", undef, $username, $speed);
     my $error_str="Added";
     return \$error_str;
 
@@ -141,12 +141,12 @@ sub saveClientDevice
         $clientid=$1;;
         if (&checkRegister($mac))
         {
-            my $error_str="Laitteisto-osoite on jo käytössä / MAC-Address is already registered";
-            $error_str=$main::dbh_hpna->do("UPDATE radreply set Value='$replymessage' where  UserName='$mac' and Attribute='Reply-Message'");
+            my $error_str="Laitteisto-osoite on jo k\u00e4yt\u00f6ss\u00e4 / MAC-Address is already registered";
+            $error_str=$main::dbh_hpna->do("UPDATE radreply set Value=? where  UserName=? and Attribute='Reply-Message'", undef, $replymessage, $mac);
             if ($error_str eq "0E0")
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message',':=','$replymessage')");
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid',':=','$clientid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'Reply-Message',':=',?)", undef, $mac, $replymessage);
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'clientid',':=',?)", undef, $mac, $clientid);
             }
             elsif ($error_str eq 1)
             {
@@ -160,10 +160,10 @@ sub saveClientDevice
 
             if (defined $filterid)
             {
-                $error_str=$main::dbh_hpna->do("UPDATE radreply SET Value='$filterid' where UserName='$mac' and Attribute='Filter-Id'");
+                $error_str=$main::dbh_hpna->do("UPDATE radreply SET Value=? where UserName=? and Attribute='Filter-Id'", undef, $filterid, $mac);
                 if ($error_str eq "0E0")
                 {
-                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id',':=','$filterid')");
+                    $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'Filter-Id',':=',?)", undef, $mac, $filterid);
                     return 1;
                 }
                 elsif ($error_str eq 1)
@@ -186,13 +186,13 @@ sub saveClientDevice
         }
         else
         {
-            
-            $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,'$mac','Cleartext-Password',':=','getinfo')");
-            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message',':=','$replymessage')");
-            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','clientid',':=','$clientid')");            
+
+            $main::dbh_hpna->do("INSERT INTO radcheck VALUES (NULL,?,'Cleartext-Password',':=','getinfo')", undef, $mac);
+            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'Reply-Message',':=',?)", undef, $mac, $replymessage);
+            $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'clientid',':=',?)", undef, $mac, $clientid);
             if (defined $filterid)
             {
-                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Filter-Id',':=','$filterid')");
+                $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,?,'Filter-Id',':=',?)", undef, $mac, $filterid);
                 my $error_str="OK $clientid";
                 return \$error_str;
                 return 1;
@@ -225,7 +225,7 @@ sub showHPNAAddress
         my %temphash=%$ref;
         foreach (keys %temphash)
         {
-            Tvalue("Rekisteröity HPNA-MAC",$_);
+            Tvalue("Rekisterï¿½ity HPNA-MAC",$_);
         }
     }
 
@@ -235,8 +235,8 @@ sub checkRegister
 {
     my $mac=shift;
     my $found=0;
-    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radcheck WHERE UserName = '$mac' and Attribute='clientid'  ORDER BY Attribute;");
-    $sth->execute();
+    my $sth = $main::dbh_hpna->prepare("SELECT Username,Attribute,Value FROM radcheck WHERE UserName = ? and Attribute='clientid'  ORDER BY Attribute;");
+    $sth->execute($mac);
     my @row;
 
     while ( @row = $sth->fetchrow_array ) {

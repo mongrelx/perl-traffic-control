@@ -26,17 +26,18 @@ sub loadBlackListDB
     {
         print "Loading whole blacklist\n";
         $sth = $main::dbh_hpna->prepare("SELECT Username,Groupname FROM usergroup;");
+        $sth->execute();
     }
     else
     {
-        $sth = $main::dbh_hpna->prepare("SELECT Username,Groupname FROM usergroup WHERE UserName = '$mac';");
+        $sth = $main::dbh_hpna->prepare("SELECT Username,Groupname FROM usergroup WHERE UserName = ?;");
+        $sth->execute($mac);
     }
-    $sth->execute();
     my @row;
     while ( @row = $sth->fetchrow_array ) {
         $BlackList{$row[0]}{'usergroup'}=$row[1];
-        my $sth2 = $main::dbh_ptc->prepare("SELECT * FROM blacklist WHERE username = '$row[0]' AND StopTime='0000-00-00 00:00:00';");
-        $sth2->execute();
+        my $sth2 = $main::dbh_ptc->prepare("SELECT * FROM blacklist WHERE username = ? AND StopTime='0000-00-00 00:00:00';");
+        $sth2->execute($row[0]);
         while ( @row2 = $sth2->fetchrow_array ) {
             $BlackList{$row[0]}{'reason'}=$row2[2];
             $BlackList{$row[0]}{'notes'}=$row2[3];
@@ -57,8 +58,8 @@ sub closeBlackListDB
     my ($mac,$reason,$starttime,$point)=@_;
     $mac=lc($mac);
     chomp($mac);
-    my $sth = $main::dbh_hpna->do("DELETE FROM usergroup WHERE UserName = '$mac' AND GroupName='BLACKLIST_$reason';");
-    my $sth2 = $main::dbh_ptc->do("UPDATE blacklist SET point='$point',ReadTime=NOW(),StopTime=NOW() WHERE username = '$mac' AND reason='$reason' AND StartTime='$starttime';");
+    $main::dbh_hpna->do("DELETE FROM usergroup WHERE UserName = ? AND GroupName=?", undef, $mac, "BLACKLIST_$reason");
+    $main::dbh_ptc->do("UPDATE blacklist SET point=?,ReadTime=NOW(),StopTime=NOW() WHERE username = ? AND reason=? AND StartTime=?", undef, $point, $mac, $reason, $starttime);
     
 }
 
@@ -67,7 +68,7 @@ sub setBlackListDBReadTime
     my ($mac,$reason,$starttime,$point)=@_;
     $mac=lc($mac);
     chomp($mac);
-    my $sth2 = $main::dbh_ptc->do("UPDATE blacklist SET point='$point',ReadTime=NOW() WHERE username = '$mac' AND StopTime='0000-00-00 00:00:00';");
+    $main::dbh_ptc->do("UPDATE blacklist SET point=?,ReadTime=NOW() WHERE username = ? AND StopTime='0000-00-00 00:00:00'", undef, $point, $mac);
     
 }
 
@@ -75,8 +76,8 @@ sub checkDB
 {
     my $mac=shift;
     my $found=0;
-    my $sth = $main::dbh_hpna->prepare("SELECT UserName,GroupName FROM usergroup WHERE UserName = '$mac';");
-    $sth->execute();
+    my $sth = $main::dbh_hpna->prepare("SELECT UserName,GroupName FROM usergroup WHERE UserName = ?;");
+    $sth->execute($mac);
     my @row;
 
     while ( @row = $sth->fetchrow_array ) {
@@ -108,9 +109,9 @@ sub addBlackListDB
         }
         else
         {
-            $main::dbh_ptc->do("INSERT INTO blacklist VALUES (NULL,'$mac','$reason','$notes',NULL,NOW(),'0000-00-00 00:00:00','InfoScreen','$region','$clientid','0000-00-00 00:00:00')");
-            $reason="BLACKLIST_".uc($reason);
-            $main::dbh_hpna->do("INSERT INTO usergroup VALUES (NULL,'$mac','$reason')");
+            $main::dbh_ptc->do("INSERT INTO blacklist VALUES (NULL,?,?,?,NULL,NOW(),'0000-00-00 00:00:00','InfoScreen',?,?,'0000-00-00 00:00:00')", undef, $mac, $reason, $notes, $region, $clientid);
+            my $blacklist_reason="BLACKLIST_".uc($reason);
+            $main::dbh_hpna->do("INSERT INTO usergroup VALUES (NULL,?,?)", undef, $mac, $blacklist_reason);
             return 1;
         }
         #        $main::dbh_hpna->do("INSERT INTO radreply VALUES (NULL,'$mac','Reply-Message','$clientid/$username/$main::region','$clientid','==')");
