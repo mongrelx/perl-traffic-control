@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rrdtool \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Perl dependencies via cpanm
+# Install core Perl dependencies
 RUN cpanm --notest \
     DBI \
     DBD::MariaDB \
@@ -29,8 +29,12 @@ RUN cpanm --notest \
     LWP::UserAgent \
     HTTP::Request \
     Digest::MD5 \
-    RRDTool::OO \
     && rm -rf /root/.cpanm
+
+# Install RRDTool::OO (optional, for -s stats mode)
+# Allow failure — RRD stats are not required for core operation
+RUN cpanm --notest RRDTool::OO || true
+RUN rm -rf /root/.cpanm
 
 # Create app directory
 WORKDIR /opt/ptc
